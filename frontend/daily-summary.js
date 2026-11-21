@@ -95,6 +95,21 @@
     return `<h3>${escape(t.prayer)}</h3><p class="muted">${escape(t.prayerUnavailable)}</p><button class="secondary" type="button" data-utility="prayer-settings">${escape(t.prayerSettings)}</button>`;
   }
 
+  function renderEventControls(event, language = "ar", busy = false, eventDraft = null, eventError = "", surface = "daily") {
+    const t = labels[language] || labels.ar;
+    if (event.recurring) return "";
+    const disabled = busy ? "disabled" : "";
+    if (eventDraft?.id === event.id && (eventDraft.surface || "daily") === surface) {
+      return `<form data-daily-event-form><label class="field">${escape(t.eventName)}
+        <input name="title" maxlength="200" required value="${escape(eventDraft.title)}" ${disabled}></label>
+        ${eventError ? `<p class="backend-task-error" role="alert">${escape(eventError)}</p>` : ""}
+        <div class="options"><button class="primary" type="submit" ${disabled}>${escape(t.saveEvent)}</button>
+        <button class="secondary" type="button" data-daily-event-cancel ${disabled}>${escape(t.cancelEvent)}</button></div></form>`;
+    }
+    const attribute = surface === "timeline" ? "data-timeline-event-edit" : "data-daily-event-edit";
+    return `<div class="options"><button class="secondary" type="button" ${attribute}="${escape(event.id)}" aria-label="${escape(`${t.editEvent} · ${event.title}`)}" ${busy || eventDraft ? "disabled" : ""}>${escape(t.editEvent)}</button></div>`;
+  }
+
   function render(model, language = "ar", open = false, busy = false, sources = { status: "unavailable" },
     prayer = { status: "unavailable" }, eventDraft = null, eventError = "") {
     const t = labels[language] || labels.ar;
@@ -116,13 +131,7 @@
       const habitButton = (habit, status, label) =>
         `<button class="secondary" type="button" data-daily-habit="${escape(habit.id)}" data-habit-status="${status}" aria-label="${escape(`${label} · ${habit.name}`)}" ${busy || habit.record?.status === status ? "disabled" : ""}>${escape(label)}</button>`;
       const eventView = event => {
-        const editor = eventDraft?.id === event.id
-          ? `<form data-daily-event-form><label class="field">${escape(t.eventName)}
-              <input name="title" maxlength="200" required value="${escape(eventDraft.title)}" ${disabled}></label>
-              ${eventError ? `<p class="backend-task-error" role="alert">${escape(eventError)}</p>` : ""}
-              <div class="options"><button class="primary" type="submit" ${disabled}>${escape(t.saveEvent)}</button>
-              <button class="secondary" type="button" data-daily-event-cancel ${disabled}>${escape(t.cancelEvent)}</button></div></form>`
-          : event.recurring ? "" : `<div class="options"><button class="secondary" type="button" data-daily-event-edit="${escape(event.id)}" aria-label="${escape(`${t.editEvent} · ${event.title}`)}" ${busy || eventDraft ? "disabled" : ""}>${escape(t.editEvent)}</button></div>`;
+        const editor = renderEventControls(event, language, busy, eventDraft, eventError, "daily");
         return `<li class="daily-start-item">${escape(event.title)} · <bdi>${escape(event.allDay ? t.allDay : event.startsBeforeToday ? t.ongoing : formatTime(event.startAt))}</bdi>
           ${event.recurring ? `<span class="muted"> · ${escape(t.recurringOriginal)}</span>` : ""}${editor}</li>`;
       };
@@ -162,5 +171,5 @@
     </details>`;
   }
 
-  return Object.freeze({ summarize, render, renderPrayer });
+  return Object.freeze({ summarize, render, renderPrayer, renderEventControls });
 });

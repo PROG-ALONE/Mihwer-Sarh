@@ -326,6 +326,39 @@ test("isolated Mihwar API filters habit records and overlapping events without e
       assert.deepEqual(overlapping.map(row => row.id), [events[0].id]);
       assert.deepEqual(touching, []);
 
+      const allDay = await request("calendar-events", "POST", {
+        body: {
+          journey_id: journey.id, title: `${stamp}-all-day`,
+          start_at: "2026-03-09T10:00:00Z", end_at: "2026-03-10T10:00:00Z",
+          time_zone: "Pacific/Kiritimati", all_day_start: "2026-03-10", all_day_end: "2026-03-11"
+        }
+      });
+      assert.equal(allDay.length, 1);
+      events.push(allDay[0]);
+      const civilWindow = {
+        journey_id: journey.id,
+        overlap_from: "2026-03-11T00:00:00.000Z", overlap_to: "2026-03-12T00:00:00.000Z",
+        all_day_date_from: "2026-03-10", all_day_date_to: "2026-03-10"
+      };
+      const civilIncluded = await request("calendar-events", "GET", { query: { id: allDay[0].id, ...civilWindow } });
+      assert.deepEqual(civilIncluded.map(row => row.id), [allDay[0].id]);
+      const civilExcluded = await request("calendar-events", "GET", {
+        query: { id: allDay[0].id, ...civilWindow, all_day_date_from: "2026-03-11", all_day_date_to: "2026-03-11" }
+      });
+      assert.deepEqual(civilExcluded, []);
+      const annualWindow = {
+        journey_id: journey.id,
+        overlap_from: "2025-12-31T00:00:00.000Z", overlap_to: "2027-01-02T00:00:00.000Z",
+        all_day_date_from: "2026-01-01", all_day_date_to: "2026-12-31"
+      };
+      const annualEvents = await request("calendar-events", "GET", { query: { id: events[0].id, ...annualWindow } });
+      assert.deepEqual(annualEvents.map(row => row.id), [events[0].id]);
+      const otherUserAllDay = await rawRequest(base, secondBearerToken, "calendar-events", "GET", {
+        query: { id: allDay[0].id, ...civilWindow }
+      });
+      assert.equal(otherUserAllDay.response.status, 200);
+      assert.deepEqual(otherUserAllDay.payload?.data, []);
+
       const eventVersion = events[0].version;
       const renamed = await request("calendar-events", "PATCH", {
         query: { id: events[0].id, expected_version: eventVersion },

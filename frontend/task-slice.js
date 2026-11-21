@@ -9,7 +9,8 @@
   const { createTaskRepository, toTimelineEvent } = root.MihwerTaskRepository || require("./task-repository");
   const { createDaySourcesRepository } = root.MihwerDaySources || require("./day-sources");
   const { nextPrayer } = root.MihwerPrayerSummary || require("./prayer-summary");
-  const { summarize: summarizeDay, render: renderDay, renderPrayer } = root.MihwerDailySummary || require("./daily-summary");
+  const { summarize: summarizeDay, render: renderDay, renderPrayer, renderEventControls } =
+    root.MihwerDailySummary || require("./daily-summary");
   const state = {
     auth: "loading",
     busy: false,
@@ -27,11 +28,12 @@
     dailyOpen: false,
     dailySkipped: [],
     dailySources: { status: "unavailable" },
+    timelineAppointments: { status: "unavailable", events: [] },
     eventDraft: null
   };
   const messages = {
     ar: {
-      title: "مهامك المحفوظة", intro: "تُحمّل المهام من الخادم، ويعرض المسار عناصرها مباشرة من مصدرها الأصلي.",
+      title: "مهامك المحفوظة", intro: "تُحمّل المهام والمواعيد من الخادم، ويعرض المسار عناصرها من مصادرها الأصلية.",
       loading: "جارٍ التحقق من الجلسة وتحميل المهام…", unauthenticated: "يلزم تسجيل الدخول عبر صَرح لعرض البيانات المحفوظة. لم تُعرض بيانات المثال.",
       expired: "انتهت الجلسة. سجّل الدخول مجدداً عبر صَرح.", unavailable: "خدمة الهوية أو الخلفية غير متاحة حالياً. لا تُعرض بيانات تجريبية.",
       error: "تعذر تحميل بيانات الخادم. أعد المحاولة.", retry: "إعادة المحاولة", empty: "لا توجد مهام محفوظة بعد.",
@@ -46,9 +48,15 @@
       archived: "أكد الخادم أرشفة المهمة.", saving: "جارٍ الحفظ…", conflict: "تغيرت المهمة على الخادم. حدّث القائمة ثم أعد المحاولة.",
       habitSaved: "أكد الخادم تحديث سجل العادة.", habitConflict: "تغير سجل العادة على الخادم. حدّث القائمة ثم أعد المحاولة.",
       eventSaved: "أكد الخادم تحديث اسم الموعد.", eventConflict: "تغير الموعد على الخادم. حدّث القائمة ثم أعد المحاولة.",
-      eventValidation: "تحقق من اسم الموعد.", eventMissing: "لم يعد الموعد متاحاً في ملخص اليوم.",
+      eventValidation: "تحقق من اسم الموعد.", eventMissing: "لم يعد الموعد متاحاً في هذا العرض. احتفظ بنص المسودة أو ألغِ التعديل.",
       dayChanged: "تغير تاريخ اليوم؛ حُدّث الملخص دون تسجيل الحالة السابقة.",
-      validation: "تحقق من الاسم والتاريخ والمدة.", timeline: "المسار الزمني · من المهام الأصلية",
+      validation: "تحقق من الاسم والتاريخ والمدة.", timeline: "المسار الزمني · من المهام والمواعيد الأصلية",
+      timelineEmpty: "لا توجد مهام أو مواعيد ضمن الفترة.",
+      timelineError: "تعذر تحميل مواعيد المسار. أعد المحاولة.",
+      timelineUnavailable: "مواعيد المسار غير متاحة حالياً.",
+      timelineAllDay: "طوال اليوم", timelineOngoing: "مستمر من تاريخ سابق",
+      timelineRecurring: "موعد متكرر · الأصل فقط", timelineDraftLock: "احفظ تعديل الموعد أو ألغِه قبل تغيير الفترة.",
+      eventDraft: "مسودة اسم الموعد",
       status: "حالة الاتصال", dateRequired: "اختر التاريخ.", network: "تعذر الاتصال بالخادم.",
       expiredNotice: "رفض الخادم الجلسة؛ أعد تسجيل الدخول.",
       trialNotStarted: "ابدأ تجربتك المجانية الآن. ستستمر 72 ساعة كاملة من وقت الخادم.",
@@ -59,7 +67,7 @@
       activationRejected: "الكود غير صالح أو منتهي أو بلغ حد الاستخدام."
     },
     en: {
-      title: "Your saved tasks", intro: "Tasks load from the server; the timeline reads the original task records.",
+      title: "Your saved tasks", intro: "Tasks and appointments load from the server; the timeline reads their original records.",
       loading: "Checking session and loading tasks…", unauthenticated: "Sign in through Sarh to view saved data. Example data is hidden.",
       expired: "Your session expired. Sign in through Sarh again.", unavailable: "Identity or backend service is unavailable. Example data is hidden.",
       error: "Could not load server data. Try again.", retry: "Retry", empty: "No saved tasks yet.",
@@ -71,9 +79,15 @@
       archived: "The server confirmed the task was archived.", saving: "Saving…", conflict: "The task changed on the server. Refresh and retry.",
       habitSaved: "The server confirmed the habit record update.", habitConflict: "The habit record changed on the server. Refresh and retry.",
       eventSaved: "The server confirmed the appointment name update.", eventConflict: "The appointment changed on the server. Refresh and retry.",
-      eventValidation: "Check the appointment name.", eventMissing: "The appointment is no longer available in today's summary.",
+      eventValidation: "Check the appointment name.", eventMissing: "The appointment is no longer available in this view. Keep the draft text or cancel editing.",
       dayChanged: "The date changed; the summary was refreshed without saving the previous day.",
-      validation: "Check the name, date, and estimate.", timeline: "Timeline · derived from original tasks",
+      validation: "Check the name, date, and estimate.", timeline: "Timeline · derived from original tasks and appointments",
+      timelineEmpty: "There are no tasks or appointments in this period.",
+      timelineError: "Could not load timeline appointments. Try again.",
+      timelineUnavailable: "Timeline appointments are currently unavailable.",
+      timelineAllDay: "All day", timelineOngoing: "Continues from an earlier date",
+      timelineRecurring: "Recurring appointment · original only", timelineDraftLock: "Save or cancel the appointment edit before changing the period.",
+      eventDraft: "Appointment name draft",
       createJourney: "Create a journey", journeyName: "Journey name",
       day: "Day", week: "Week", month: "Month", year: "Year",
       previous: "Previous", next: "Next", selectDate: "Choose date",
@@ -150,6 +164,7 @@
     state.dailyOpen = false;
     state.dailySkipped = [];
     state.dailySources = { status: "unavailable" };
+    state.timelineAppointments = { status: "unavailable", events: [] };
     state.eventDraft = null;
   }
 
@@ -230,6 +245,7 @@
         state.editing = null;
         state.draft = null;
         state.dailySources = { status: "unavailable" };
+        state.timelineAppointments = { status: "unavailable", events: [] };
         state.eventDraft = null;
         return;
       }
@@ -251,6 +267,7 @@
         state.editing = null;
         state.draft = null;
         state.dailySources = { status: "unavailable" };
+        state.timelineAppointments = { status: "unavailable", events: [] };
         state.dailySkipped = [];
         state.eventDraft = null;
         return;
@@ -260,7 +277,8 @@
       const journey = journeys[0] || null;
       const today = journey ? currentDate(journey.timeZone) : null;
       const selectedDate = state.selectedDate || today || currentDate();
-      const [loaded, dailySources] = journey ? await Promise.all([
+      const visibleRange = periodRange(selectedDate, state.period);
+      const [loaded, dailySources, timelineAppointments] = journey ? await Promise.all([
         loadTaskWindows(journey, selectedDate, state.period, controller.signal, today),
         daySourcesRepository.load({
           journeyId: journey.id, today,
@@ -268,8 +286,15 @@
         }).then(data => ({ status: "ready", data })).catch(error => {
           if (error?.status === 401 || error?.status >= 500 || error?.code === "request_aborted") throw error;
           return { status: "error" };
+        }),
+        daySourcesRepository.listEvents({
+          journeyId: journey.id, fromDate: visibleRange.start, toDate: visibleRange.end,
+          timeZone: journey.timeZone, signal: controller.signal
+        }).then(events => ({ status: "ready", events })).catch(error => {
+          if (error?.status === 401 || error?.status >= 500 || error?.code === "request_aborted") throw error;
+          return { status: "error", events: [] };
         })
-      ]) : [{ tasks: [], today: null }, { status: "unavailable" }];
+      ]) : [{ tasks: [], today: null }, { status: "unavailable" }, { status: "unavailable", events: [] }];
       if (!isCurrent()) return;
       if (state.loadedToday !== loaded.today) state.dailySkipped = [];
       state.journey = journey;
@@ -277,9 +302,9 @@
       state.tasks = loaded.tasks;
       state.loadedToday = loaded.today;
       state.dailySources = dailySources;
-      if (state.eventDraft && dailySources.status === "ready" &&
-          !dailySources.data.events.some(event => event.id === state.eventDraft.id && !event.recurring)) {
-        state.eventDraft = null;
+      state.timelineAppointments = timelineAppointments;
+      const eventSource = state.eventDraft?.surface === "timeline" ? timelineAppointments : dailySources;
+      if (state.eventDraft && eventSource.status === "ready" && !eventForDraft()) {
         state.error = "event_missing";
       }
       state.auth = "authenticated";
@@ -290,6 +315,7 @@
       state.selectedDate = null;
       state.loadedToday = null;
       state.dailySources = { status: "unavailable" };
+      state.timelineAppointments = { status: "unavailable", events: [] };
       state.error = error instanceof ApiError ? error.code : "backend_error";
       if (error?.status === 401 || error?.code === "unauthenticated") state.auth = "expired";
       else if (error?.status === 503 || error?.code === "session_unavailable") state.auth = "unavailable";
@@ -431,8 +457,42 @@
     return shifted.toISOString().slice(0, 10);
   }
 
+  function eventForDraft() {
+    if (!state.eventDraft) return null;
+    const source = state.eventDraft.surface === "timeline" ? state.timelineAppointments : state.dailySources;
+    const events = source.status === "ready"
+      ? state.eventDraft.surface === "timeline" ? source.events : source.data.events
+      : [];
+    return events.find(event => event.id === state.eventDraft.id && !event.recurring) || null;
+  }
+
   function timelineEvents() {
-    return state.tasks.filter(task => task.status !== "archived").map(toTimelineEvent);
+    const tasks = state.tasks.filter(task => task.status !== "archived").map(toTimelineEvent);
+    const appointments = state.timelineAppointments.status === "ready"
+      ? state.timelineAppointments.events.map(event => ({
+        id: `calendar:${event.id}`, sourceId: event.id, sourceType: "calendar-event",
+        title: event.title, localDate: event.startDate, original: event
+      }))
+      : [];
+    return [...tasks, ...appointments];
+  }
+
+  function timelineRow(event, range) {
+    if (event.sourceType === "task") {
+      return `<article class="panel" data-timeline-source="${escapeHtml(event.id)}"><time>${escapeHtml(event.localDate)}</time> · ${escapeHtml(event.title)}
+        <div class="options"><button class="secondary" type="button" data-task-edit="${escapeHtml(event.sourceId)}" ${state.busy || state.eventDraft ? "disabled" : ""}>${escapeHtml(text("edit"))}</button></div></article>`;
+    }
+    const original = event.original;
+    const date = original.startsBeforeRange ? range.start : event.localDate;
+    const time = original.allDay ? text("timelineAllDay") :
+      original.startsBeforeRange ? text("timelineOngoing") :
+      new Intl.DateTimeFormat(language === "ar" ? "ar" : "en", {
+        timeZone: state.journey.timeZone, hour: "2-digit", minute: "2-digit"
+      }).format(new Date(original.startAt));
+    const editor = renderEventControls(original, language, state.busy || Boolean(state.editing),
+      state.eventDraft, state.eventDraft && state.error ? actionErrorText(state.error) : "", "timeline");
+    return `<article class="panel" data-timeline-source="${escapeHtml(event.id)}"><time>${escapeHtml(date)}</time> · ${escapeHtml(event.title)} · <bdi>${escapeHtml(time)}</bdi>
+      ${original.recurring ? `<span class="muted"> · ${escapeHtml(text("timelineRecurring"))}</span>` : ""}${editor}</article>`;
   }
 
   function nextDailyPrayer() {
@@ -460,7 +520,21 @@
     const visibleTasks = state.tasks.filter(task => task.startDate >= range.start && task.startDate <= range.end);
     const ordered = [...visibleTasks].sort((a, b) => a.startDate.localeCompare(b.startDate) || b.priority - a.priority || a.title.localeCompare(b.title));
     const visibleIds = new Set(visibleTasks.map(task => task.id));
-    const timeline = timelineEvents().filter(event => event.status !== "archived" && visibleIds.has(event.sourceId));
+    const timeline = timelineEvents().filter(event =>
+      event.sourceType !== "task" || visibleIds.has(event.sourceId)
+    ).sort((a, b) => {
+      const aDate = a.localDate < range.start ? range.start : a.localDate;
+      const bDate = b.localDate < range.start ? range.start : b.localDate;
+      const order = event => event.sourceType === "task" || event.original.allDay || event.original.startsBeforeRange
+        ? Number.NEGATIVE_INFINITY : Date.parse(event.original.startAt);
+      const aOrder = order(a);
+      const bOrder = order(b);
+      return aDate.localeCompare(bDate) || (aOrder < bOrder ? -1 : aOrder > bOrder ? 1 : 0) ||
+        a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+    });
+    const navigationLocked = state.busy || state.eventDraft?.surface === "timeline";
+    const draftSource = state.eventDraft?.surface === "timeline" ? state.timelineAppointments : state.dailySources;
+    const missingDraft = state.eventDraft && draftSource.status === "ready" && !eventForDraft();
     const daily = state.loadedToday
       ? renderDay(
         summarizeDay({ today: state.loadedToday, tasks: state.tasks, skippedIds: state.dailySkipped }),
@@ -470,13 +544,17 @@
       : "";
     return `<div class="page-head"><div><p class="eyebrow">${escapeHtml(state.journey.title)}</p><h1>${escapeHtml(text("title"))}</h1><p class="sub">${escapeHtml(text("intro"))}</p></div></div>
       ${daily}
+      ${missingDraft ? `<section class="panel"><p role="alert">${escapeHtml(text("eventMissing"))}</p>
+        <label class="field">${escapeHtml(text("eventDraft"))}<input readonly value="${escapeHtml(state.eventDraft.title)}"></label>
+        <button class="secondary" type="button" data-daily-event-cancel>${escapeHtml(text("cancel"))}</button></section>` : ""}
       <div class="levels" aria-label="${escapeHtml(text("title"))}">${["day", "week", "month", "year"].map(period =>
-        `<button type="button" data-backend-period="${period}" class="${state.period === period ? "active" : ""}" ${state.period === period ? 'aria-current="page"' : ""}>${escapeHtml(text(period))}</button>`
+        `<button type="button" data-backend-period="${period}" class="${state.period === period ? "active" : ""}" ${state.period === period ? 'aria-current="page"' : ""} ${navigationLocked ? "disabled" : ""}>${escapeHtml(text(period))}</button>`
       ).join("")}</div>
+      ${state.eventDraft?.surface === "timeline" ? `<p class="muted">${escapeHtml(text("timelineDraftLock"))}</p>` : ""}
       <section class="panel"><div class="options">
-        <button class="secondary" type="button" data-backend-date-shift="-1" aria-label="${escapeHtml(text("previous"))}">‹</button>
-        <label class="field">${escapeHtml(text("selectDate"))}<input type="date" data-backend-selected-date value="${escapeHtml(selectedDate)}"></label>
-        <button class="secondary" type="button" data-backend-date-shift="1" aria-label="${escapeHtml(text("next"))}">›</button>
+        <button class="secondary" type="button" data-backend-date-shift="-1" aria-label="${escapeHtml(text("previous"))}" ${navigationLocked ? "disabled" : ""}>‹</button>
+        <label class="field">${escapeHtml(text("selectDate"))}<input type="date" data-backend-selected-date value="${escapeHtml(selectedDate)}" ${navigationLocked ? "disabled" : ""}></label>
+        <button class="secondary" type="button" data-backend-date-shift="1" aria-label="${escapeHtml(text("next"))}" ${navigationLocked ? "disabled" : ""}>›</button>
       </div></section>
       <section class="panel"><div class="options"><button class="primary" type="button" data-task-add>${escapeHtml(text("add"))}</button>
       <button class="secondary" type="button" data-backend-retry ${state.busy ? "disabled" : ""}>${escapeHtml(text("retry"))}</button></div></section>
@@ -484,7 +562,10 @@
       ${state.error && !state.editing ? `<p class="backend-task-error" role="alert">${escapeHtml(actionErrorText(state.error))}</p>` : ""}
       ${state.editing ? formView(state.editing === "new" ? null : state.editing) : ""}
       <h2>${escapeHtml(text("timeline"))}</h2>
-      <div class="backend-timeline">${timeline.map(event => `<article class="panel" data-timeline-source="${escapeHtml(event.id)}"><time>${escapeHtml(event.localDate)}</time> · ${escapeHtml(event.title)}</article>`).join("") || `<p class="muted">${escapeHtml(text("empty"))}</p>`}</div>
+      ${state.timelineAppointments.status === "error" ? `<p role="alert">${escapeHtml(text("timelineError"))}</p>` :
+        state.timelineAppointments.status === "unavailable" ? `<p class="muted">${escapeHtml(text("timelineUnavailable"))}</p>` : ""}
+      <div class="backend-timeline">${timeline.map(event => timelineRow(event, range)).join("") ||
+        (state.timelineAppointments.status === "ready" ? `<p class="muted">${escapeHtml(text("timelineEmpty"))}</p>` : "")}</div>
       <h2>${escapeHtml(text("title"))}</h2>
       <div class="backend-task-list">${ordered.map(taskRow).join("") || `<p class="muted">${escapeHtml(text("empty"))}</p>`}</div>`;
   }
@@ -610,8 +691,7 @@
 
   async function saveEventTitle(form) {
     const draft = state.eventDraft;
-    const event = state.dailySources.status === "ready" && draft
-      ? state.dailySources.data.events.find(item => item.id === draft.id && !item.recurring) : null;
+    const event = eventForDraft();
     if (!event) {
       state.error = "event_missing";
       notifyRender();
@@ -722,7 +802,7 @@
       });
     });
     document.addEventListener("click", event => {
-      const target = event.target.closest("[data-backend-retry],[data-access-start],[data-task-add],[data-task-cancel],[data-task-edit],[data-task-toggle],[data-task-archive],[data-backend-period],[data-backend-date-shift],[data-daily-skip],[data-daily-restore],[data-daily-habit],[data-daily-event-edit],[data-daily-event-cancel]");
+      const target = event.target.closest("[data-backend-retry],[data-access-start],[data-task-add],[data-task-cancel],[data-task-edit],[data-task-toggle],[data-task-archive],[data-backend-period],[data-backend-date-shift],[data-daily-skip],[data-daily-restore],[data-daily-habit],[data-daily-event-edit],[data-timeline-event-edit],[data-daily-event-cancel]");
       if (!target) return;
       if (state.busy) return;
       if (target.matches("[data-access-start]")) {
@@ -747,11 +827,13 @@
         return;
       }
       if (target.matches("[data-backend-period]")) {
+        if (state.eventDraft?.surface === "timeline") return;
         state.period = target.dataset.backendPeriod;
         refresh();
         return;
       }
       if (target.matches("[data-backend-date-shift]")) {
+        if (state.eventDraft?.surface === "timeline") return;
         state.selectedDate = shiftPeriodDate(state.selectedDate, state.period, Number(target.dataset.backendDateShift));
         refresh();
         return;
@@ -767,12 +849,15 @@
         notifyRender();
         return;
       }
-      if (target.matches("[data-daily-event-edit]")) {
+      if (target.matches("[data-daily-event-edit],[data-timeline-event-edit]")) {
         if (state.eventDraft) return;
-        const selected = state.dailySources.status === "ready"
-          ? state.dailySources.data.events.find(item => item.id === target.dataset.dailyEventEdit && !item.recurring) : null;
+        const surface = target.matches("[data-timeline-event-edit]") ? "timeline" : "daily";
+        const source = surface === "timeline" ? state.timelineAppointments : state.dailySources;
+        const events = source.status === "ready" ? surface === "timeline" ? source.events : source.data.events : [];
+        const id = surface === "timeline" ? target.dataset.timelineEventEdit : target.dataset.dailyEventEdit;
+        const selected = events.find(item => item.id === id && !item.recurring);
         if (selected) {
-          state.eventDraft = { id: selected.id, title: selected.title };
+          state.eventDraft = { id: selected.id, title: selected.title, surface };
           state.error = "";
           state.notice = "";
           notifyRender();
@@ -826,6 +911,10 @@
     });
     document.addEventListener("change", event => {
       if (!event.target.matches("[data-backend-selected-date]") || !event.target.value) return;
+      if (state.eventDraft?.surface === "timeline") {
+        event.target.value = state.selectedDate;
+        return;
+      }
       try {
         periodRange(event.target.value, state.period);
         state.selectedDate = event.target.value;
@@ -866,7 +955,8 @@
     bind();
     if (typeof document !== "undefined") {
       const refreshAtDateChange = () => {
-        if (document.hidden || state.auth !== "authenticated" || state.busy || state.editing || !state.journey || !state.loadedToday) return;
+        if (document.hidden || state.auth !== "authenticated" || state.busy || state.editing ||
+            state.eventDraft || !state.journey || !state.loadedToday) return;
         const today = currentDate(state.journey.timeZone);
         if (today === state.loadedToday) {
           const prayer = document.querySelector("[data-daily-prayer]");

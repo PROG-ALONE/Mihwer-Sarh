@@ -199,6 +199,18 @@ test("daily habit and calendar windows are validated and remain owner-scoped", a
   assert.equal(requestUrl.searchParams.get("and"),
     "(start_at.lt.2026-11-23T00:00:00.000Z,end_at.gt.2026-11-20T00:00:00.000Z)");
 
+  const yearRange = {
+    journey_id: journeyId,
+    overlap_from: "2023-12-31T00:00:00.000Z", overlap_to: "2025-01-02T00:00:00.000Z",
+    all_day_date_from: "2024-01-01", all_day_date_to: "2024-12-31"
+  };
+  assert.equal((await handler(request("GET", "calendar-events", { query: yearRange }))).status, 200);
+  assert.equal(requestUrl.searchParams.get("owner_id"), `eq.${userA}`);
+  assert.equal(requestUrl.searchParams.get("journey_id"), `eq.${journeyId}`);
+  assert.equal(requestUrl.searchParams.get("and"), null);
+  assert.equal(requestUrl.searchParams.get("or"),
+    "(and(all_day_start.is.null,start_at.lt.2025-01-02T00:00:00.000Z,end_at.gt.2023-12-31T00:00:00.000Z),and(all_day_start.lte.2024-12-31,all_day_end.gt.2024-01-01))");
+
   for (const [resource, query] of [
     ["habit-records", { journey_id: "" }],
     ["habit-records", { journey_id: [journeyId, journeyId] }],
@@ -210,8 +222,14 @@ test("daily habit and calendar windows are validated and remain owner-scoped", a
     ["tasks", habitRange],
     ["calendar-events", { overlap_from: "2026-02-31T00:00:00.000Z", overlap_to: eventRange.overlap_to }],
     ["calendar-events", { overlap_from: eventRange.overlap_to, overlap_to: eventRange.overlap_from }],
-    ["calendar-events", { overlap_from: "2026-01-01T00:00:00.000Z", overlap_to: "2026-02-01T00:00:00.000Z" }],
-    ["habits", eventRange]
+    ["calendar-events", { overlap_from: "2024-01-01T00:00:00.000Z", overlap_to: "2025-01-04T00:00:00.000Z" }],
+    ["calendar-events", { ...yearRange, all_day_date_to: "2025-01-01" }],
+    ["calendar-events", { ...yearRange, all_day_date_from: ["2024-01-01"] }],
+    ["calendar-events", { ...yearRange, all_day_date_from: "2024-02-31" }],
+    ["calendar-events", { ...eventRange, all_day_date_from: "2026-11-20" }],
+    ["calendar-events", { all_day_date_from: "2026-11-20", all_day_date_to: "2026-11-21" }],
+    ["habits", eventRange],
+    ["habits", yearRange]
   ]) {
     assert.equal((await handler(request("GET", resource, { query }))).status, 400);
   }

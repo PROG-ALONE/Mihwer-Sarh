@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { summarize, render } = require("./daily-summary");
+const { summarize, render, renderEventControls } = require("./daily-summary");
 
 const tasks = [
   { id: "a", title: "Low", startDate: "2026-11-21", status: "active", priority: 1 },
@@ -79,4 +79,14 @@ test("daily source failures are visible and real habits and events are rendered 
   assert.match(editing, /data-daily-event-form/);
   assert.match(editing, /value="&lt;Changed &quot;"/);
   assert.match(editing, /role="alert">Conflict/);
+
+  const timelineDraft = { id: "event", title: "<Timeline draft>", surface: "timeline" };
+  const dailyWhileEditingTimeline = render(model, "ar", true, false, sources, undefined, timelineDraft);
+  assert.doesNotMatch(dailyWhileEditingTimeline, /data-daily-event-form/);
+  assert.match(dailyWhileEditingTimeline, /data-daily-event-edit="event"[^>]*disabled/);
+  const timelineEditor = renderEventControls(sources.data.events[0], "ar", false, timelineDraft, "Conflict", "timeline");
+  assert.match(timelineEditor, /data-daily-event-form/);
+  assert.match(timelineEditor, /value="&lt;Timeline draft&gt;"/);
+  assert.match(timelineEditor, /role="alert">Conflict/);
+  assert.equal(renderEventControls(sources.data.events[1], "ar", false, null, "", "timeline"), "");
 });

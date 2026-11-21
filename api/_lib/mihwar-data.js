@@ -163,7 +163,10 @@ async function createHandler({
       let dbQuery = baseQuery;
 
       if (method === "GET") {
-        for (const key of ["journey_id", "local_date_from", "local_date_to", "effective_date_to", "overlap_from", "overlap_to"]) {
+        for (const key of [
+          "journey_id", "local_date_from", "local_date_to", "effective_date_to",
+          "overlap_from", "overlap_to", "all_day_date_from", "all_day_date_to"
+        ]) {
           if (request.query?.[key] !== undefined && typeof request.query[key] !== "string") {
             throw new IdentityError("validation_failed", 400);
           }
@@ -178,6 +181,8 @@ async function createHandler({
         const effectiveDateTo = queryValue(request, "effective_date_to");
         const overlapFrom = queryValue(request, "overlap_from");
         const overlapTo = queryValue(request, "overlap_to");
+        const allDayFrom = queryValue(request, "all_day_date_from");
+        const allDayTo = queryValue(request, "all_day_date_to");
         if (id && config.hasId === false) throw new IdentityError("unsupported_filter", 400);
         if (journeyId !== undefined && !config.journeyScoped && !config.parentJourney) throw new IdentityError("unsupported_filter", 400);
         if (id && !UUID.test(id)) throw new IdentityError("validation_failed", 400);
@@ -208,10 +213,19 @@ async function createHandler({
         if (overlapFrom !== undefined || overlapTo !== undefined) {
           if (resource !== "calendar-events" || !validUtcTimestamp(overlapFrom) || !validUtcTimestamp(overlapTo) ||
               Date.parse(overlapFrom) >= Date.parse(overlapTo) ||
-              Date.parse(overlapTo) - Date.parse(overlapFrom) > 7 * 86_400_000) {
+              Date.parse(overlapTo) - Date.parse(overlapFrom) > 368 * 86_400_000) {
             throw new IdentityError("validation_failed", 400);
           }
           baseQuery.and = `(start_at.lt.${overlapTo},end_at.gt.${overlapFrom})`;
+        }
+        if (allDayFrom !== undefined || allDayTo !== undefined) {
+          if (resource !== "calendar-events" || !validUtcTimestamp(overlapFrom) || !validUtcTimestamp(overlapTo) ||
+              !validDate(allDayFrom) || !validDate(allDayTo) || allDayFrom > allDayTo ||
+              Date.parse(`${allDayTo}T00:00:00.000Z`) - Date.parse(`${allDayFrom}T00:00:00.000Z`) > 365 * 86_400_000) {
+            throw new IdentityError("validation_failed", 400);
+          }
+          delete baseQuery.and;
+          baseQuery.or = `(and(all_day_start.is.null,start_at.lt.${overlapTo},end_at.gt.${overlapFrom}),and(all_day_start.lte.${allDayTo},all_day_end.gt.${allDayFrom}))`;
         }
         if (id) baseQuery.id = `eq.${id}`;
         if (beforeId !== undefined) baseQuery.id = `lt.${beforeId}`;

@@ -88,6 +88,62 @@ test("daily sources use scheduled revisions, real records, and journey time-zone
   const events = requests.find(request => request.resource === "calendar-events");
   assert.equal(events.query.overlap_from, "2026-11-20T00:00:00.000Z");
   assert.equal(events.query.overlap_to, "2026-11-23T00:00:00.000Z");
+  assert.equal(events.query.all_day_date_from, "2026-11-21");
+  assert.equal(events.query.all_day_date_to, "2026-11-21");
+});
+
+test("calendar periods use civil all-day dates and exclusive timed end boundaries", async () => {
+  const rows = fixture();
+  const base = {
+    journey_id: journeyId, time_zone: "UTC", all_day_start: null, all_day_end: null,
+    recurrence_rule: null, deleted_at: null, version: 1
+  };
+  rows["calendar-events"] = [
+    {
+      ...base, id: "00000000-0000-4000-8000-000000000075", title: "Civil all day",
+      start_at: "2024-01-01T00:00:00Z", end_at: "2024-01-02T00:00:00Z",
+      all_day_start: "2024-12-31", all_day_end: "2025-01-01"
+    },
+    {
+      ...base, id: "00000000-0000-4000-8000-000000000074", title: "Ends at midnight",
+      start_at: "2024-12-30T23:00:00Z", end_at: "2024-12-31T00:00:00Z"
+    },
+    {
+      ...base, id: "00000000-0000-4000-8000-000000000073", title: "Ends after midnight",
+      start_at: "2024-12-30T23:00:00Z", end_at: "2024-12-31T00:00:00.000001Z"
+    },
+    {
+      ...base, id: "00000000-0000-4000-8000-000000000072", title: "Recurring original",
+      start_at: "2024-12-31T09:00:00Z", end_at: "2024-12-31T10:00:00Z",
+      recurrence_rule: "FREQ=WEEKLY"
+    }
+  ];
+  const requests = [];
+  const repository = repositoryFor(rows, requests);
+  const events = await repository.listEvents({
+    journeyId, fromDate: "2024-12-31", toDate: "2024-12-31", timeZone: "UTC"
+  });
+  assert.deepEqual(events.map(event => event.title), ["Ends after midnight", "Civil all day", "Recurring original"]);
+  assert.equal(events[0].startsBeforeRange, true);
+  assert.equal(events[1].startDate, "2024-12-31");
+  assert.equal(events[1].lastDate, "2024-12-31");
+  assert.equal(events[2].recurring, true);
+  assert.equal(requests[0].query.all_day_date_from, "2024-12-31");
+  assert.equal(requests[0].query.all_day_date_to, "2024-12-31");
+  const followingDay = await repository.listEvents({
+    journeyId, fromDate: "2025-01-01", toDate: "2025-01-01", timeZone: "UTC"
+  });
+  assert.deepEqual(followingDay, []);
+  await repository.listEvents({ journeyId, fromDate: "2024-01-01", toDate: "2024-12-31", timeZone: "UTC" });
+  await assert.rejects(repository.listEvents({
+    journeyId, fromDate: "2024-01-01", toDate: "2025-01-01", timeZone: "UTC"
+  }), /invalid_calendar_event_range/);
+  await assert.rejects(repository.listEvents({
+    journeyId, fromDate: "2024-12-31", toDate: "2024-12-30", timeZone: "UTC"
+  }), /invalid_calendar_event_range/);
+  await assert.rejects(repository.listEvents({
+    journeyId, fromDate: "2024-12-31", toDate: "2024-12-31", timeZone: "Invalid/Zone"
+  }), RangeError);
 });
 
 test("daily sources reject invalid records, duplicate dates, and unavailable APIs", async () => {

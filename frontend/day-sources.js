@@ -62,6 +62,7 @@
     return {
       id: row.id, journeyId, title: row.title, version: row.version, startAt: row.start_at, endAt: row.end_at,
       allDay: row.all_day_start != null, recurring: row.recurrence_rule != null,
+      allDayStart: row.all_day_start ?? null, allDayEnd: row.all_day_end ?? null,
       deleted: row.deleted_at != null
     };
   }
@@ -72,6 +73,12 @@
     }).formatToParts(new Date(instant));
     const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
     return `${values.year}-${values.month}-${values.day}`;
+  }
+
+  function lastIncludedInstant(timestamp) {
+    const fraction = /\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/.exec(timestamp)?.[1] || "";
+    // Preserve PostgreSQL sub-millisecond values when interpreting an exclusive end.
+    return Date.parse(timestamp) - (/[1-9]/.test(fraction.slice(3)) ? 0 : 1);
   }
 
   function isScheduled(habit, effective, date) {
@@ -86,23 +93,46 @@
   function createDaySourcesRepository(api) {
     if (!api || typeof api.request !== "function") throw new TypeError("API client is required");
 
+    async function listEvents({ journeyId, fromDate, toDate, timeZone, signal } = {}) {
+      if (!isUuid(journeyId) || !isDate(fromDate) || !isDate(toDate) || fromDate > toDate ||
+          typeof timeZone !== "string" || !timeZone) {
+        throw new TypeError("invalid_calendar_event_range");
+      }
+      new Intl.DateTimeFormat("en", { timeZone }).format(0);
+      const start = Date.parse(`${fromDate}T00:00:00.000Z`);
+      const end = Date.parse(`${toDate}T00:00:00.000Z`);
+      if (end - start > 365 * 86_400_000) throw new TypeError("invalid_calendar_event_range");
+      const from = new Date(start - 86_400_000).toISOString();
+      const to = new Date(end + 2 * 86_400_000).toISOString();
+      if (!isTimestamp(from) || !isTimestamp(to)) throw new TypeError("invalid_calendar_event_range");
+      const rows = await listPages(api, "calendar-events", {
+        query: {
+          journey_id: journeyId, overlap_from: from, overlap_to: to,
+          all_day_date_from: fromDate, all_day_date_to: toDate
+        },
+        signal
+      });
+      return rows.map(row => mapEvent(row, journeyId)).filter(event => !event.deleted).map(event => {
+        const startDate = event.allDay ? event.allDayStart : dateInZone(Date.parse(event.startAt), timeZone);
+        const lastDate = event.allDay ? shiftDate(event.allDayEnd, -1) : dateInZone(lastIncludedInstant(event.endAt), timeZone);
+        return { ...event, startDate, lastDate, startsBeforeRange: startDate < fromDate };
+      }).filter(event => event.startDate <= toDate && event.lastDate >= fromDate)
+        .sort((a, b) => a.startDate.localeCompare(b.startDate) ||
+          Date.parse(a.startAt) - Date.parse(b.startAt) || a.id.localeCompare(b.id));
+    }
+
     async function load({ journeyId, today, timeZone, signal } = {}) {
       if (!isUuid(journeyId) || !isDate(today) || typeof timeZone !== "string" || !timeZone) {
         throw new TypeError("invalid_daily_source_request");
       }
       new Intl.DateTimeFormat("en", { timeZone }).format(0);
-      const start = Date.parse(`${today}T00:00:00.000Z`);
-      const from = new Date(start - 86_400_000).toISOString();
-      const to = new Date(start + 2 * 86_400_000).toISOString();
-      const [habitRows, revisionRows, recordRows, eventRows] = await Promise.all([
+      const [habitRows, revisionRows, recordRows, events] = await Promise.all([
         listPages(api, "habits", { query: { journey_id: journeyId }, signal }),
         listPages(api, "habit-revisions", { query: { journey_id: journeyId, effective_date_to: today }, signal }),
         listPages(api, "habit-records", {
           query: { journey_id: journeyId, local_date_from: shiftDate(today, -29), local_date_to: today }, signal
         }),
-        listPages(api, "calendar-events", {
-          query: { journey_id: journeyId, overlap_from: from, overlap_to: to }, signal
-        })
+        listEvents({ journeyId, fromDate: today, toDate: today, timeZone, signal })
       ]);
       const habits = habitRows.map(row => mapHabit(row, journeyId));
       const revisions = revisionRows.map(mapRevision);
@@ -137,13 +167,6 @@
       }));
       const yesterday = shiftDate(today, -1);
       const yesterdayRecords = records.filter(record => record.date === yesterday);
-      const events = eventRows.map(row => mapEvent(row, journeyId)).filter(event => {
-        if (event.deleted) return false;
-        const startDate = dateInZone(Date.parse(event.startAt), timeZone);
-        const lastDate = dateInZone(Date.parse(event.endAt) - 1, timeZone);
-        return startDate <= today && lastDate >= today;
-      }).map(event => ({ ...event, startsBeforeToday: dateInZone(Date.parse(event.startAt), timeZone) < today }))
-        .sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt) || a.id.localeCompare(b.id));
       return Object.freeze({
         timeZone,
         todayHabits,
@@ -154,7 +177,7 @@
           skipped: yesterdayRecords.filter(record => record.status === "skipped").length,
           total: yesterdayRecords.length
         },
-        events
+        events: events.map(event => ({ ...event, startsBeforeToday: event.startsBeforeRange }))
       });
     }
 
@@ -197,7 +220,7 @@
       return saved;
     }
 
-    return Object.freeze({ load, saveHabitRecord, saveEventTitle });
+    return Object.freeze({ load, listEvents, saveHabitRecord, saveEventTitle });
   }
 
   return Object.freeze({ createDaySourcesRepository });
