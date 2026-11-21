@@ -16,6 +16,7 @@ const STATIC_FILES = [
   "scroll-gesture.js",
   "system-log.js",
   "frontend/api-client.js",
+  "frontend/paged-request.js",
   "frontend/task-repository.js",
   "frontend/task-slice.js",
   "app.js",

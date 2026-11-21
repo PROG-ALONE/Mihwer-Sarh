@@ -5,6 +5,7 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.MihwerTaskRepository = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, () => {
+  const { listPages } = globalThis.MihwerPagination || require("./paged-request");
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const DATE = /^\d{4}-\d{2}-\d{2}$/;
   const priorityValues = Object.freeze({
@@ -39,6 +40,10 @@
       !UUID.test(row.id) || !UUID.test(row.journey_id) ||
       typeof row.title !== "string" || !isDate(row.start_date) ||
       !["active", "paused", "completed", "archived"].includes(row.status) ||
+      !Number.isInteger(row.priority) || row.priority < 0 || row.priority > 5 ||
+      row.due_date !== null && row.due_date !== undefined && !isDate(row.due_date) ||
+      row.estimate_minutes !== null && row.estimate_minutes !== undefined &&
+        (!Number.isInteger(row.estimate_minutes) || row.estimate_minutes < 1 || row.estimate_minutes > 10080) ||
       !Number.isInteger(row.version) || row.version < 1
     ) {
       throw new Error("invalid_task_response");
@@ -93,13 +98,19 @@
       return mapJourney(rows[0]);
     }
 
-    async function list(journeyId, { signal } = {}) {
+    async function list(journeyId, { signal, fromDate, toDate } = {}) {
       if (!UUID.test(journeyId || "")) throw new TypeError("journey id must be a UUID");
-      const rows = await api.request("tasks", {
-        query: { journey_id: journeyId, limit: 100 },
+      if ((fromDate !== undefined || toDate !== undefined) &&
+          (!isDate(fromDate) || !isDate(toDate) || fromDate > toDate)) {
+        throw new TypeError("invalid_task_date_range");
+      }
+      const rows = await listPages(api, "tasks", {
+        query: {
+          journey_id: journeyId,
+          ...(fromDate ? { start_date_from: fromDate, start_date_to: toDate } : {})
+        },
         signal
       });
-      if (!Array.isArray(rows)) throw new Error("invalid_tasks_response");
       return rows.map(mapTask).filter(task => task.status !== "archived");
     }
 

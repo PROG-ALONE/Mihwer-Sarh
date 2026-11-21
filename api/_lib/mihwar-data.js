@@ -50,7 +50,14 @@ const RESOURCES = Object.freeze({
 });
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const RESERVED_FIELDS = new Set(["owner_id", "actor_id", "mihwar_user_id", "version", "created_at", "updated_at"]);
+
+function validDate(value) {
+  if (typeof value !== "string" || !DATE.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
 
 function response(status, body) {
   return { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" }, body };
@@ -148,12 +155,25 @@ async function createHandler({
 
       if (method === "GET") {
         const id = queryValue(request, "id");
+        const beforeId = queryValue(request, "before_id");
         const journeyId = queryValue(request, "journey_id");
+        const fromDate = queryValue(request, "start_date_from");
+        const toDate = queryValue(request, "start_date_to");
         if (id && config.hasId === false) throw new IdentityError("unsupported_filter", 400);
         if (journeyId && !config.journeyScoped) throw new IdentityError("unsupported_filter", 400);
         if (id && !UUID.test(id)) throw new IdentityError("validation_failed", 400);
+        if (beforeId !== undefined && (id || config.hasId === false || config.order || !UUID.test(beforeId))) {
+          throw new IdentityError("validation_failed", 400);
+        }
         if (journeyId && !UUID.test(journeyId)) throw new IdentityError("validation_failed", 400);
+        if (fromDate !== undefined || toDate !== undefined) {
+          if (resource !== "tasks" || !validDate(fromDate) || !validDate(toDate) || fromDate > toDate) {
+            throw new IdentityError("validation_failed", 400);
+          }
+          baseQuery.and = `(start_date.gte.${fromDate},start_date.lte.${toDate})`;
+        }
         if (id) baseQuery.id = `eq.${id}`;
+        if (beforeId !== undefined) baseQuery.id = `lt.${beforeId}`;
         if (journeyId) baseQuery.journey_id = `eq.${journeyId}`;
         const limit = Number(queryValue(request, "limit") || 50);
         if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new IdentityError("invalid_limit", 400);

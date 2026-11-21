@@ -31,7 +31,7 @@ test("repository lists tasks from the journey source and excludes archived rows"
     async request(name, requestOptions) {
       resource = name;
       options = requestOptions;
-      return [taskRow(), taskRow({ id: "00000000-0000-4000-8000-000000000022", status: "archived" })];
+      return [taskRow({ id: "00000000-0000-4000-8000-000000000022", status: "archived" }), taskRow()];
     }
   });
   const tasks = await repository.list(journeyId);
@@ -110,4 +110,39 @@ test("timeline projection retains the original task id and does not create store
 test("invalid server task shapes fail closed", () => {
   assert.throws(() => mapTask(taskRow({ start_date: "not-a-date" })), /invalid_task_response/);
   assert.throws(() => mapTask(taskRow({ version: 0 })), /invalid_task_response/);
+  assert.throws(() => mapTask(taskRow({ priority: "high" })), /invalid_task_response/);
+  assert.throws(() => mapTask(taskRow({ due_date: "2026-02-31" })), /invalid_task_response/);
+});
+
+test("task lists read every descending page within the requested date range", async () => {
+  const rows = Array.from({ length: 205 }, (_, index) => taskRow({
+    id: `00000000-0000-4000-8000-${(205 - index).toString(16).padStart(12, "0")}`
+  }));
+  const requests = [];
+  const repository = createTaskRepository({
+    async request(resource, options) {
+      requests.push({ resource, ...options.query });
+      return rows.filter(row => !options.query.before_id || row.id < options.query.before_id).slice(0, options.query.limit);
+    }
+  });
+  const tasks = await repository.list(journeyId, { fromDate: "2026-11-01", toDate: "2026-11-30" });
+  assert.equal(tasks.length, 205);
+  assert.equal(new Set(tasks.map(task => task.id)).size, 205);
+  assert.equal(requests.length, 3);
+  assert.equal(requests[0].start_date_from, "2026-11-01");
+  assert.equal(requests[0].start_date_to, "2026-11-30");
+  assert.equal(requests[1].before_id, rows[99].id);
+  assert.equal(requests[2].before_id, rows[199].id);
+  await assert.rejects(repository.list(journeyId, { fromDate: "2026-02-31", toDate: "2026-03-01" }), /invalid_task_date_range/);
+});
+
+test("task pagination rejects repeated, unordered, or oversized server pages", async () => {
+  const duplicate = createTaskRepository({
+    async request() { return [taskRow(), taskRow()]; }
+  });
+  await assert.rejects(duplicate.list(journeyId), /invalid_paginated_response/);
+  const oversized = createTaskRepository({
+    async request() { return Array.from({ length: 101 }, () => taskRow()); }
+  });
+  await assert.rejects(oversized.list(journeyId), /invalid_paginated_response/);
 });

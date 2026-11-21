@@ -131,6 +131,43 @@ test("resource API scopes reads to the verified profile and bounds pagination", 
   assert.equal(invalid.body.error.code, "invalid_limit");
 });
 
+test("task cursor and date filters remain owner-scoped and reject malformed ranges", async () => {
+  let requestUrl;
+  const handler = await createHandler({
+    provider: createTestIdentityProvider(),
+    profileResolver: async () => ({ id: userA, status: "active" }),
+    env: { MIHWAR_SUPABASE_URL: "https://mihwar.test.invalid", MIHWAR_SUPABASE_ANON_KEY: "public-test-key" },
+    fetchImpl: async (url) => {
+      requestUrl = new URL(url);
+      return jsonResponse([]);
+    }
+  });
+  const before = "00000000-0000-4000-8000-000000000003";
+  const result = await handler(request("GET", "tasks", { query: {
+    before_id: before, start_date_from: "2026-11-01", start_date_to: "2026-11-30"
+  } }));
+  assert.equal(result.status, 200);
+  assert.equal(requestUrl.searchParams.get("owner_id"), `eq.${userA}`);
+  assert.equal(requestUrl.searchParams.get("id"), `lt.${before}`);
+  assert.equal(requestUrl.searchParams.get("order"), "id.desc");
+  assert.equal(requestUrl.searchParams.get("and"), "(start_date.gte.2026-11-01,start_date.lte.2026-11-30)");
+
+  for (const query of [
+    { before_id: "bad" },
+    { before_id: "" },
+    { id: before, before_id: before },
+    { start_date_from: "2026-02-31", start_date_to: "2026-03-01" },
+    { start_date_from: "2026-11-30", start_date_to: "2026-11-01" },
+    { start_date_from: "2026-11-01" }
+  ]) {
+    assert.equal((await handler(request("GET", "tasks", { query }))).status, 400);
+  }
+  assert.equal((await handler(request("GET", "user-preferences", { query: { before_id: before } }))).status, 400);
+  assert.equal((await handler(request("GET", "notes", { query: {
+    start_date_from: "2026-11-01", start_date_to: "2026-11-30"
+  } }))).status, 400);
+});
+
 test("create forces the verified owner and rejects attempts to supply ownership", async () => {
   const provider = createTestIdentityProvider();
   let posted;
