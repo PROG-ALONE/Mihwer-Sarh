@@ -1,5 +1,7 @@
 begin;
 
+set local search_path = public, extensions;
+
 select extensions.plan(30);
 
 select extensions.is(
@@ -143,11 +145,12 @@ select extensions.throws_ok(
   null,
   'clients cannot read private idempotency records'
 );
+with updated as (
+  update public.journeys set title = 'Unauthorized change'
+  where title = 'Journey B' returning id
+)
 select extensions.is(
-  (with updated as (
-    update public.journeys set title = 'Unauthorized change'
-    where title = 'Journey B' returning id
-  ) select count(*)::integer from updated),
+  (select count(*)::integer from updated),
   0,
   'user A cannot update user B rows by guessing an identifier'
 );
