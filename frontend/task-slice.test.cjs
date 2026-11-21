@@ -201,16 +201,20 @@ test("signing out or switching session clears private tasks and unfinished draft
   slice.state.tasks = [{ id: "private-task", title: "Private" }];
   slice.state.editing = "new";
   slice.state.draft = { title: "Private draft" };
+  slice.state.eventDraft = { id: "private-event", title: "Private event draft" };
   notifySession(null);
   assert.equal(slice.state.auth, "unauthenticated");
   assert.deepEqual(slice.state.tasks, []);
   assert.equal(slice.state.draft, null);
+  assert.equal(slice.state.eventDraft, null);
   assert.equal(slice.state.editing, null);
 
   slice.state.tasks = [{ id: "previous-user", title: "Previous user's task" }];
   slice.state.draft = { title: "Previous user's draft" };
+  slice.state.eventDraft = { id: "previous-event", title: "Previous user's event draft" };
   notifySession({ authenticated: true });
   assert.deepEqual(slice.state.tasks, []);
   assert.equal(slice.state.draft, null);
+  assert.equal(slice.state.eventDraft, null);
   await new Promise(resolve => setImmediate(resolve));
 });

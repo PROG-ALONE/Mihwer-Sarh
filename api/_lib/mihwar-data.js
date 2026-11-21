@@ -14,8 +14,8 @@ const RESOURCES = Object.freeze({
   "task-occurrences": { table: "task_occurrences", mode: "read-write", journeyScoped: false },
   "task-subtasks": { table: "task_subtasks", mode: "read-write", journeyScoped: false },
   habits: { table: "habits", mode: "read-write", journeyScoped: true },
-  "habit-revisions": { table: "habit_revisions", mode: "append", journeyScoped: false },
-  "habit-records": { table: "habit_records", mode: "append", journeyScoped: false },
+  "habit-revisions": { table: "habit_revisions", mode: "append", journeyScoped: false, parentJourney: "habits" },
+  "habit-records": { table: "habit_records", mode: "read-write", journeyScoped: false, parentJourney: "habits", updateFields: ["status", "amount"] },
   "project-milestones": { table: "project_milestones", mode: "read-write", journeyScoped: false },
   "goal-project-links": { table: "goal_project_links", mode: "append", hasId: false, order: "goal_id.desc,project_id.desc", journeyScoped: false },
   "goal-task-links": { table: "goal_task_links", mode: "append", hasId: false, order: "goal_id.desc,task_id.desc", journeyScoped: false },
@@ -51,12 +51,19 @@ const RESOURCES = Object.freeze({
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const RESERVED_FIELDS = new Set(["owner_id", "actor_id", "mihwar_user_id", "version", "created_at", "updated_at"]);
+const UTC_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const RESERVED_FIELDS = new Set(["owner_id", "actor_id", "user_id", "mihwar_user_id", "mihwer_user_id", "version", "created_at", "updated_at"]);
 
 function validDate(value) {
   if (typeof value !== "string" || !DATE.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return Number.isFinite(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function validUtcTimestamp(value) {
+  if (typeof value !== "string" || !UTC_TIMESTAMP.test(value) || !validDate(value.slice(0, 10))) return false;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.valueOf()) && parsed.toISOString() === value;
 }
 
 function response(status, body) {
@@ -154,27 +161,63 @@ async function createHandler({
       let dbBody;
 
       if (method === "GET") {
+        for (const key of ["journey_id", "local_date_from", "local_date_to", "effective_date_to", "overlap_from", "overlap_to"]) {
+          if (request.query?.[key] !== undefined && typeof request.query[key] !== "string") {
+            throw new IdentityError("validation_failed", 400);
+          }
+        }
         const id = queryValue(request, "id");
         const beforeId = queryValue(request, "before_id");
         const journeyId = queryValue(request, "journey_id");
         const fromDate = queryValue(request, "start_date_from");
         const toDate = queryValue(request, "start_date_to");
+        const fromLocalDate = queryValue(request, "local_date_from");
+        const toLocalDate = queryValue(request, "local_date_to");
+        const effectiveDateTo = queryValue(request, "effective_date_to");
+        const overlapFrom = queryValue(request, "overlap_from");
+        const overlapTo = queryValue(request, "overlap_to");
         if (id && config.hasId === false) throw new IdentityError("unsupported_filter", 400);
-        if (journeyId && !config.journeyScoped) throw new IdentityError("unsupported_filter", 400);
+        if (journeyId !== undefined && !config.journeyScoped && !config.parentJourney) throw new IdentityError("unsupported_filter", 400);
         if (id && !UUID.test(id)) throw new IdentityError("validation_failed", 400);
         if (beforeId !== undefined && (id || config.hasId === false || config.order || !UUID.test(beforeId))) {
           throw new IdentityError("validation_failed", 400);
         }
-        if (journeyId && !UUID.test(journeyId)) throw new IdentityError("validation_failed", 400);
+        if (journeyId !== undefined && !UUID.test(journeyId)) throw new IdentityError("validation_failed", 400);
         if (fromDate !== undefined || toDate !== undefined) {
           if (resource !== "tasks" || !validDate(fromDate) || !validDate(toDate) || fromDate > toDate) {
             throw new IdentityError("validation_failed", 400);
           }
           baseQuery.and = `(start_date.gte.${fromDate},start_date.lte.${toDate})`;
         }
+        if (fromLocalDate !== undefined || toLocalDate !== undefined) {
+          if (resource !== "habit-records" || !validDate(fromLocalDate) || !validDate(toLocalDate) ||
+              fromLocalDate > toLocalDate ||
+              Date.parse(`${toLocalDate}T00:00:00.000Z`) - Date.parse(`${fromLocalDate}T00:00:00.000Z`) > 366 * 86_400_000) {
+            throw new IdentityError("validation_failed", 400);
+          }
+          baseQuery.and = `(local_date.gte.${fromLocalDate},local_date.lte.${toLocalDate})`;
+        }
+        if (effectiveDateTo !== undefined) {
+          if (resource !== "habit-revisions" || !validDate(effectiveDateTo)) {
+            throw new IdentityError("validation_failed", 400);
+          }
+          baseQuery.effective_date = `lte.${effectiveDateTo}`;
+        }
+        if (overlapFrom !== undefined || overlapTo !== undefined) {
+          if (resource !== "calendar-events" || !validUtcTimestamp(overlapFrom) || !validUtcTimestamp(overlapTo) ||
+              Date.parse(overlapFrom) >= Date.parse(overlapTo) ||
+              Date.parse(overlapTo) - Date.parse(overlapFrom) > 7 * 86_400_000) {
+            throw new IdentityError("validation_failed", 400);
+          }
+          baseQuery.and = `(start_at.lt.${overlapTo},end_at.gt.${overlapFrom})`;
+        }
         if (id) baseQuery.id = `eq.${id}`;
         if (beforeId !== undefined) baseQuery.id = `lt.${beforeId}`;
-        if (journeyId) baseQuery.journey_id = `eq.${journeyId}`;
+        if (journeyId && config.journeyScoped) baseQuery.journey_id = `eq.${journeyId}`;
+        if (journeyId && config.parentJourney) {
+          baseQuery.select = `*,${config.parentJourney}!inner(journey_id)`;
+          baseQuery[`${config.parentJourney}.journey_id`] = `eq.${journeyId}`;
+        }
         const limit = Number(queryValue(request, "limit") || 50);
         if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new IdentityError("invalid_limit", 400);
         baseQuery.limit = String(limit);
@@ -203,6 +246,9 @@ async function createHandler({
         dbBody = parseBody(request.body);
         assertSafePayload(dbBody);
         if (!Object.keys(dbBody).length) throw new IdentityError("validation_failed", 400);
+        if (config.updateFields && Object.keys(dbBody).some(key => !config.updateFields.includes(key))) {
+          throw new IdentityError("validation_failed", 400);
+        }
         if (!config.ownerKeyed) baseQuery.id = `eq.${id}`;
         baseQuery.version = `eq.${expectedVersion}`;
         dbMethod = "PATCH";
@@ -221,6 +267,9 @@ async function createHandler({
         fetchImpl
       });
       if (!result.response.ok) {
+        if (method === "POST" && resource === "habit-records" && result.data?.code === "23505") {
+          return response(409, { error: { code: "version_conflict" } });
+        }
         const status = result.response.status === 401 ? 401 : result.response.status === 403 ? 403 : 400;
         return response(status, { error: { code: status === 400 ? "database_request_failed" : status === 401 ? "unauthenticated" : "forbidden" } });
       }

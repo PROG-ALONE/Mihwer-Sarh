@@ -7,6 +7,9 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, root => {
   const { ApiError, createApiClient } = root.MihwerApiClient || require("./api-client");
   const { createTaskRepository, toTimelineEvent } = root.MihwerTaskRepository || require("./task-repository");
+  const { createDaySourcesRepository } = root.MihwerDaySources || require("./day-sources");
+  const { nextPrayer } = root.MihwerPrayerSummary || require("./prayer-summary");
+  const { summarize: summarizeDay, render: renderDay, renderPrayer } = root.MihwerDailySummary || require("./daily-summary");
   const state = {
     auth: "loading",
     busy: false,
@@ -20,7 +23,11 @@
     journeyDraft: "",
     period: "day",
     selectedDate: null,
-    loadedToday: null
+    loadedToday: null,
+    dailyOpen: false,
+    dailySkipped: [],
+    dailySources: { status: "unavailable" },
+    eventDraft: null
   };
   const messages = {
     ar: {
@@ -37,6 +44,10 @@
       save: "حفظ على الخادم", cancel: "إلغاء", complete: "إنجاز", reopen: "إعادة فتح", edit: "تعديل",
       archive: "أرشفة", saved: "أكد الخادم حفظ المهمة.", updated: "أكد الخادم تحديث المهمة.",
       archived: "أكد الخادم أرشفة المهمة.", saving: "جارٍ الحفظ…", conflict: "تغيرت المهمة على الخادم. حدّث القائمة ثم أعد المحاولة.",
+      habitSaved: "أكد الخادم تحديث سجل العادة.", habitConflict: "تغير سجل العادة على الخادم. حدّث القائمة ثم أعد المحاولة.",
+      eventSaved: "أكد الخادم تحديث اسم الموعد.", eventConflict: "تغير الموعد على الخادم. حدّث القائمة ثم أعد المحاولة.",
+      eventValidation: "تحقق من اسم الموعد.", eventMissing: "لم يعد الموعد متاحاً في ملخص اليوم.",
+      dayChanged: "تغير تاريخ اليوم؛ حُدّث الملخص دون تسجيل الحالة السابقة.",
       validation: "تحقق من الاسم والتاريخ والمدة.", timeline: "المسار الزمني · من المهام الأصلية",
       status: "حالة الاتصال", dateRequired: "اختر التاريخ.", network: "تعذر الاتصال بالخادم.",
       expiredNotice: "رفض الخادم الجلسة؛ أعد تسجيل الدخول.",
@@ -58,6 +69,10 @@
       save: "Save to server", cancel: "Cancel", complete: "Complete", reopen: "Reopen", edit: "Edit",
       archive: "Archive", saved: "The server confirmed the task was saved.", updated: "The server confirmed the task update.",
       archived: "The server confirmed the task was archived.", saving: "Saving…", conflict: "The task changed on the server. Refresh and retry.",
+      habitSaved: "The server confirmed the habit record update.", habitConflict: "The habit record changed on the server. Refresh and retry.",
+      eventSaved: "The server confirmed the appointment name update.", eventConflict: "The appointment changed on the server. Refresh and retry.",
+      eventValidation: "Check the appointment name.", eventMissing: "The appointment is no longer available in today's summary.",
+      dayChanged: "The date changed; the summary was refreshed without saving the previous day.",
       validation: "Check the name, date, and estimate.", timeline: "Timeline · derived from original tasks",
       createJourney: "Create a journey", journeyName: "Journey name",
       day: "Day", week: "Week", month: "Month", year: "Year",
@@ -80,6 +95,7 @@
     }
   });
   let repository = createTaskRepository(client);
+  let daySourcesRepository = createDaySourcesRepository(client);
   let sessionProvider = null;
   let refreshController = null;
   let actionController = null;
@@ -88,6 +104,13 @@
 
   function text(key) {
     return messages[language]?.[key] || messages.ar[key] || key;
+  }
+
+  function actionErrorText(error) {
+    return text(error === "version_conflict" ? "conflict" :
+      error === "habit_conflict" ? "habitConflict" : error === "event_conflict" ? "eventConflict" :
+      error === "event_validation" ? "eventValidation" : error === "event_missing" ? "eventMissing" :
+      error === "validation_failed" ? "validation" : "error");
   }
 
   function escapeHtml(value) {
@@ -124,6 +147,10 @@
     state.editing = null;
     state.draft = null;
     state.journeyDraft = "";
+    state.dailyOpen = false;
+    state.dailySkipped = [];
+    state.dailySources = { status: "unavailable" };
+    state.eventDraft = null;
   }
 
   function beginAction() {
@@ -160,6 +187,7 @@
   function configureApiClient(options) {
     client = createApiClient(options);
     repository = createTaskRepository(client);
+    daySourcesRepository = createDaySourcesRepository(client);
     sessionProvider = options?.sessionProvider || null;
     return client;
   }
@@ -201,6 +229,8 @@
         state.loadedToday = null;
         state.editing = null;
         state.draft = null;
+        state.dailySources = { status: "unavailable" };
+        state.eventDraft = null;
         return;
       }
       const access = await client.request("access", {
@@ -220,20 +250,38 @@
         state.loadedToday = null;
         state.editing = null;
         state.draft = null;
+        state.dailySources = { status: "unavailable" };
+        state.dailySkipped = [];
+        state.eventDraft = null;
         return;
       }
       const journeys = await repository.listJourneys({ signal: controller.signal });
       if (!isCurrent()) return;
       const journey = journeys[0] || null;
-      const selectedDate = state.selectedDate || (journey ? currentDate(journey.timeZone) : currentDate());
-      const loaded = journey
-        ? await loadTaskWindows(journey, selectedDate, state.period, controller.signal)
-        : { tasks: [], today: null };
+      const today = journey ? currentDate(journey.timeZone) : null;
+      const selectedDate = state.selectedDate || today || currentDate();
+      const [loaded, dailySources] = journey ? await Promise.all([
+        loadTaskWindows(journey, selectedDate, state.period, controller.signal, today),
+        daySourcesRepository.load({
+          journeyId: journey.id, today,
+          timeZone: journey.timeZone, signal: controller.signal
+        }).then(data => ({ status: "ready", data })).catch(error => {
+          if (error?.status === 401 || error?.status >= 500 || error?.code === "request_aborted") throw error;
+          return { status: "error" };
+        })
+      ]) : [{ tasks: [], today: null }, { status: "unavailable" }];
       if (!isCurrent()) return;
+      if (state.loadedToday !== loaded.today) state.dailySkipped = [];
       state.journey = journey;
       state.selectedDate = selectedDate;
       state.tasks = loaded.tasks;
       state.loadedToday = loaded.today;
+      state.dailySources = dailySources;
+      if (state.eventDraft && dailySources.status === "ready" &&
+          !dailySources.data.events.some(event => event.id === state.eventDraft.id && !event.recurring)) {
+        state.eventDraft = null;
+        state.error = "event_missing";
+      }
       state.auth = "authenticated";
     } catch (error) {
       if (!isCurrent()) return;
@@ -241,6 +289,7 @@
       state.journey = null;
       state.selectedDate = null;
       state.loadedToday = null;
+      state.dailySources = { status: "unavailable" };
       state.error = error instanceof ApiError ? error.code : "backend_error";
       if (error?.status === 401 || error?.code === "unauthenticated") state.auth = "expired";
       else if (error?.status === 503 || error?.code === "session_unavailable") state.auth = "unavailable";
@@ -310,7 +359,7 @@
       <label class="field">${escapeHtml(text("priority"))}<select name="priority">${text("priorities").map((label, value) =>
         `<option value="${value}" ${Number(draft.priority) === value ? "selected" : ""}>${escapeHtml(label)}</option>`
       ).join("")}</select></label>
-      <p class="backend-task-error" role="alert">${escapeHtml(state.error ? text(state.error === "version_conflict" ? "conflict" : state.error === "validation_failed" ? "validation" : "error") : "")}</p>
+      <p class="backend-task-error" role="alert">${escapeHtml(state.error ? actionErrorText(state.error) : "")}</p>
       <p class="backend-task-notice" role="status" aria-live="polite">${escapeHtml(state.notice)}</p>
       <div class="options"><button class="primary" type="submit" ${state.busy ? "disabled" : ""}>${escapeHtml(state.busy ? text("saving") : text("save"))}</button>
       <button class="secondary" type="button" data-task-cancel>${escapeHtml(text("cancel"))}</button></div>
@@ -326,8 +375,7 @@
     return `${values.year}-${values.month}-${values.day}`;
   }
 
-  async function loadTaskWindows(journey, date, period, signal) {
-    const today = currentDate(journey.timeZone);
+  async function loadTaskWindows(journey, date, period, signal, today) {
     const firstRecent = new Date(`${today}T00:00:00.000Z`);
     firstRecent.setUTCDate(firstRecent.getUTCDate() - 29);
     const recent = { start: firstRecent.toISOString().slice(0, 10), end: today };
@@ -387,6 +435,17 @@
     return state.tasks.filter(task => task.status !== "archived").map(toTimelineEvent);
   }
 
+  function nextDailyPrayer() {
+    const inputs = typeof root.MihwerPrayerInputs === "function" ? root.MihwerPrayerInputs() : null;
+    if (!inputs || !state.journey || !state.loadedToday) return { status: "unavailable" };
+    try {
+      return nextPrayer({ ...inputs, today: state.loadedToday, timeZone: state.journey.timeZone });
+    } catch (error) {
+      console.error("Could not calculate the next prayer:", error);
+      return { status: "error" };
+    }
+  }
+
   function render() {
     language = typeof document !== "undefined" && document.documentElement.lang === "en" ? "en" : "ar";
     if (state.auth !== "authenticated") return authView();
@@ -402,7 +461,15 @@
     const ordered = [...visibleTasks].sort((a, b) => a.startDate.localeCompare(b.startDate) || b.priority - a.priority || a.title.localeCompare(b.title));
     const visibleIds = new Set(visibleTasks.map(task => task.id));
     const timeline = timelineEvents().filter(event => event.status !== "archived" && visibleIds.has(event.sourceId));
+    const daily = state.loadedToday
+      ? renderDay(
+        summarizeDay({ today: state.loadedToday, tasks: state.tasks, skippedIds: state.dailySkipped }),
+        language, state.dailyOpen, state.busy, state.dailySources, nextDailyPrayer(), state.eventDraft,
+        state.eventDraft && state.error ? actionErrorText(state.error) : ""
+      )
+      : "";
     return `<div class="page-head"><div><p class="eyebrow">${escapeHtml(state.journey.title)}</p><h1>${escapeHtml(text("title"))}</h1><p class="sub">${escapeHtml(text("intro"))}</p></div></div>
+      ${daily}
       <div class="levels" aria-label="${escapeHtml(text("title"))}">${["day", "week", "month", "year"].map(period =>
         `<button type="button" data-backend-period="${period}" class="${state.period === period ? "active" : ""}" ${state.period === period ? 'aria-current="page"' : ""}>${escapeHtml(text(period))}</button>`
       ).join("")}</div>
@@ -414,7 +481,7 @@
       <section class="panel"><div class="options"><button class="primary" type="button" data-task-add>${escapeHtml(text("add"))}</button>
       <button class="secondary" type="button" data-backend-retry ${state.busy ? "disabled" : ""}>${escapeHtml(text("retry"))}</button></div></section>
       ${state.notice ? `<p class="backend-task-notice" role="status">${escapeHtml(state.notice)}</p>` : ""}
-      ${state.error && !state.editing ? `<p class="backend-task-error" role="alert">${escapeHtml(text(state.error === "version_conflict" ? "conflict" : "error"))}</p>` : ""}
+      ${state.error && !state.editing ? `<p class="backend-task-error" role="alert">${escapeHtml(actionErrorText(state.error))}</p>` : ""}
       ${state.editing ? formView(state.editing === "new" ? null : state.editing) : ""}
       <h2>${escapeHtml(text("timeline"))}</h2>
       <div class="backend-timeline">${timeline.map(event => `<article class="panel" data-timeline-source="${escapeHtml(event.id)}"><time>${escapeHtml(event.localDate)}</time> · ${escapeHtml(event.title)}</article>`).join("") || `<p class="muted">${escapeHtml(text("empty"))}</p>`}</div>
@@ -503,6 +570,84 @@
     }
   }
 
+  async function changeHabitStatus(id, status) {
+    const habit = state.dailySources.status === "ready"
+      ? state.dailySources.data.todayHabits.find(item => item.id === id) : null;
+    if (!habit || !["completed", "partial", "skipped"].includes(status) || habit.record?.status === status) return;
+    const epoch = identityEpoch;
+    if (currentDate(state.journey.timeZone) !== state.loadedToday) {
+      await refresh();
+      if (epoch === identityEpoch && state.auth === "authenticated") {
+        state.notice = text("dayChanged");
+        notifyRender();
+      }
+      return;
+    }
+    state.busy = true;
+    state.error = "";
+    state.notice = "";
+    notifyRender();
+    const controller = beginAction();
+    try {
+      await daySourcesRepository.saveHabitRecord({
+        habitId: id, date: state.loadedToday, status, record: habit.record, signal: controller.signal
+      });
+      if (epoch !== identityEpoch) return;
+      await refresh();
+      if (epoch === identityEpoch && state.auth === "authenticated") state.notice = text("habitSaved");
+    } catch (error) {
+      if (epoch !== identityEpoch) return;
+      state.error = error?.code === "version_conflict" ? "habit_conflict" :
+        error instanceof ApiError ? error.code : error.message || "backend_error";
+    } finally {
+      finishAction(controller);
+      if (epoch === identityEpoch) {
+        state.busy = false;
+        notifyRender();
+      }
+    }
+  }
+
+  async function saveEventTitle(form) {
+    const draft = state.eventDraft;
+    const event = state.dailySources.status === "ready" && draft
+      ? state.dailySources.data.events.find(item => item.id === draft.id && !item.recurring) : null;
+    if (!event) {
+      state.error = "event_missing";
+      notifyRender();
+      return;
+    }
+    draft.title = String(form.elements.title.value || "");
+    if (!draft.title.trim() || draft.title.trim().length > 200) {
+      state.error = "event_validation";
+      notifyRender();
+      return;
+    }
+    const epoch = identityEpoch;
+    state.busy = true;
+    state.error = "";
+    state.notice = "";
+    notifyRender();
+    const controller = beginAction();
+    try {
+      await daySourcesRepository.saveEventTitle({ event, title: draft.title, signal: controller.signal });
+      if (epoch !== identityEpoch) return;
+      state.eventDraft = null;
+      await refresh();
+      if (epoch === identityEpoch && state.auth === "authenticated") state.notice = text("eventSaved");
+    } catch (error) {
+      if (epoch !== identityEpoch) return;
+      state.error = error?.code === "version_conflict" ? "event_conflict" :
+        error instanceof ApiError ? error.code : error.message || "backend_error";
+    } finally {
+      finishAction(controller);
+      if (epoch === identityEpoch) {
+        state.busy = false;
+        notifyRender();
+      }
+    }
+  }
+
   function bind() {
     if (typeof document === "undefined") return;
     document.addEventListener("submit", event => {
@@ -538,6 +683,12 @@
         if (!state.busy) save(form);
         return;
       }
+      const eventForm = event.target.closest("[data-daily-event-form]");
+      if (eventForm) {
+        event.preventDefault();
+        if (!state.busy) saveEventTitle(eventForm);
+        return;
+      }
       const journeyForm = event.target.closest("[data-backend-journey-form]");
       if (!journeyForm) return;
       event.preventDefault();
@@ -571,7 +722,7 @@
       });
     });
     document.addEventListener("click", event => {
-      const target = event.target.closest("[data-backend-retry],[data-access-start],[data-task-add],[data-task-cancel],[data-task-edit],[data-task-toggle],[data-task-archive],[data-backend-period],[data-backend-date-shift]");
+      const target = event.target.closest("[data-backend-retry],[data-access-start],[data-task-add],[data-task-cancel],[data-task-edit],[data-task-toggle],[data-task-archive],[data-backend-period],[data-backend-date-shift],[data-daily-skip],[data-daily-restore],[data-daily-habit],[data-daily-event-edit],[data-daily-event-cancel]");
       if (!target) return;
       if (state.busy) return;
       if (target.matches("[data-access-start]")) {
@@ -606,6 +757,41 @@
         return;
       }
       if (target.matches("[data-backend-retry]")) { refresh(); return; }
+      if (target.matches("[data-daily-habit]")) {
+        changeHabitStatus(target.dataset.dailyHabit, target.dataset.habitStatus);
+        return;
+      }
+      if (target.matches("[data-daily-event-cancel]")) {
+        state.eventDraft = null;
+        state.error = "";
+        notifyRender();
+        return;
+      }
+      if (target.matches("[data-daily-event-edit]")) {
+        if (state.eventDraft) return;
+        const selected = state.dailySources.status === "ready"
+          ? state.dailySources.data.events.find(item => item.id === target.dataset.dailyEventEdit && !item.recurring) : null;
+        if (selected) {
+          state.eventDraft = { id: selected.id, title: selected.title };
+          state.error = "";
+          state.notice = "";
+          notifyRender();
+        }
+        return;
+      }
+      if (target.matches("[data-daily-skip]")) {
+        const id = target.dataset.dailySkip;
+        if (state.tasks.some(task => task.id === id && task.status === "active" && task.startDate === state.loadedToday)) {
+          state.dailySkipped = [...new Set([...state.dailySkipped, id])];
+          notifyRender();
+        }
+        return;
+      }
+      if (target.matches("[data-daily-restore]")) {
+        state.dailySkipped = state.dailySkipped.filter(id => id !== target.dataset.dailyRestore);
+        notifyRender();
+        return;
+      }
       if (target.matches("[data-task-add]")) { state.editing = "new"; state.draft = null; state.error = ""; state.notice = ""; notifyRender(); return; }
       if (target.matches("[data-task-cancel]")) { state.editing = null; state.draft = null; state.error = ""; state.notice = ""; notifyRender(); return; }
       if (target.matches("[data-task-edit]")) {
@@ -655,6 +841,11 @@
         state.journeyDraft = journeyForm.elements.title.value;
         return;
       }
+      const eventForm = event.target.closest("[data-daily-event-form]");
+      if (eventForm && state.eventDraft) {
+        state.eventDraft.title = eventForm.elements.title.value;
+        return;
+      }
       const form = event.target.closest("[data-backend-task-form]");
       if (!form) return;
       state.draft = {
@@ -664,6 +855,9 @@
         priority: form.elements.priority.value
       };
     });
+    document.addEventListener("toggle", event => {
+      if (event.target.matches("[data-daily-start]")) state.dailyOpen = event.target.open;
+    }, true);
   }
 
   async function start() {
@@ -674,7 +868,11 @@
       const refreshAtDateChange = () => {
         if (document.hidden || state.auth !== "authenticated" || state.busy || state.editing || !state.journey || !state.loadedToday) return;
         const today = currentDate(state.journey.timeZone);
-        if (today === state.loadedToday) return;
+        if (today === state.loadedToday) {
+          const prayer = document.querySelector("[data-daily-prayer]");
+          if (prayer && state.dailyOpen) prayer.innerHTML = renderPrayer(nextDailyPrayer(), language);
+          return;
+        }
         if (state.selectedDate === state.loadedToday) state.selectedDate = today;
         refresh();
       };

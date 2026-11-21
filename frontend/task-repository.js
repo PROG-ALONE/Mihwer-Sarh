@@ -6,8 +6,7 @@
   if (root) root.MihwerTaskRepository = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, () => {
   const { listPages } = globalThis.MihwerPagination || require("./paged-request");
-  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const DATE = /^\d{4}-\d{2}-\d{2}$/;
+  const { isUuid, isDate } = globalThis.MihwerDataValidation || require("./data-validation");
   const priorityValues = Object.freeze({
     "not-urgent-important": 2,
     "urgent-important": 5,
@@ -21,12 +20,6 @@
     throw new TypeError("invalid_task_priority");
   }
 
-  function isDate(value) {
-    if (typeof value !== "string" || !DATE.test(value)) return false;
-    const parsed = new Date(`${value}T00:00:00.000Z`);
-    return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
-  }
-
   function assertRow(row, name) {
     if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error(`invalid_${name}_response`);
     return row;
@@ -34,7 +27,7 @@
 
   function mapJourney(value) {
     const row = assertRow(value, "journey");
-    if (!UUID.test(row.id) || typeof row.title !== "string" || typeof row.time_zone !== "string") {
+    if (!isUuid(row.id) || typeof row.title !== "string" || typeof row.time_zone !== "string") {
       throw new Error("invalid_journey_response");
     }
     return Object.freeze({ id: row.id, title: row.title, timeZone: row.time_zone, status: row.status });
@@ -43,7 +36,7 @@
   function mapTask(value) {
     const row = assertRow(value, "task");
     if (
-      !UUID.test(row.id) || !UUID.test(row.journey_id) ||
+      !isUuid(row.id) || !isUuid(row.journey_id) ||
       typeof row.title !== "string" || !isDate(row.start_date) ||
       !["active", "paused", "completed", "archived"].includes(row.status) ||
       !Number.isInteger(row.priority) || row.priority < 0 || row.priority > 5 ||
@@ -105,7 +98,7 @@
     }
 
     async function list(journeyId, { signal, fromDate, toDate } = {}) {
-      if (!UUID.test(journeyId || "")) throw new TypeError("journey id must be a UUID");
+      if (!isUuid(journeyId)) throw new TypeError("journey id must be a UUID");
       if ((fromDate !== undefined || toDate !== undefined) &&
           (!isDate(fromDate) || !isDate(toDate) || fromDate > toDate)) {
         throw new TypeError("invalid_task_date_range");
@@ -121,7 +114,7 @@
     }
 
     async function getById(id, { signal } = {}) {
-      if (!UUID.test(id || "")) throw new TypeError("task id must be a UUID");
+      if (!isUuid(id)) throw new TypeError("task id must be a UUID");
       const rows = await api.request("tasks", { query: { id, limit: 1 }, signal });
       if (!Array.isArray(rows)) throw new Error("invalid_task_response");
       if (!rows.length) return null;
@@ -129,7 +122,7 @@
     }
 
     async function create(journeyId, input, { signal } = {}) {
-      if (!UUID.test(journeyId || "")) throw new TypeError("journey id must be a UUID");
+      if (!isUuid(journeyId)) throw new TypeError("journey id must be a UUID");
       const title = String(input?.title || "").trim();
       const startDate = String(input?.startDate || "");
       if (!title || title.length > 200 || !isDate(startDate)) throw new TypeError("invalid_task_input");
@@ -156,7 +149,7 @@
     }
 
     async function update(task, patch, { signal } = {}) {
-      if (!task || !UUID.test(task.id || "") || !Number.isInteger(task.version)) {
+      if (!task || !isUuid(task.id) || !Number.isInteger(task.version)) {
         throw new TypeError("invalid_task_reference");
       }
       const body = {};

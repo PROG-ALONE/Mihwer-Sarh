@@ -5,7 +5,7 @@
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   if (root) root.MihwerPagination = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, () => {
-  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const { isUuid } = globalThis.MihwerDataValidation || require("./data-validation");
   const PAGE_SIZE = 100;
 
   async function listPages(client, resource, { query = {}, signal } = {}) {
@@ -22,7 +22,7 @@
       if (!Array.isArray(rows) || rows.length > PAGE_SIZE) throw new Error("invalid_paginated_response");
       for (const row of rows) {
         const id = typeof row?.id === "string" ? row.id.toLowerCase() : "";
-        if (!UUID.test(id) || previousId !== null && id >= previousId) {
+        if (!isUuid(id) || previousId !== null && id >= previousId) {
           throw new Error("invalid_paginated_response");
         }
         previousId = id;

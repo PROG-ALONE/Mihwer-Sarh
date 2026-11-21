@@ -556,7 +556,11 @@ function progressHeatmapModel(){
         }]});
       }
     }
-    return globalThis.MihwerProgressHeatmap.build({today:taskSlice.state?.loadedToday||zoneDate(),days:[...days.values()],extendedTasks:[],habits:[]});
+    const sources=taskSlice.state?.dailySources;
+    const habits=taskSlice.state?.auth==="authenticated"&&sources?.status==="ready"?sources.data.heatmapHabits:[];
+    const model=globalThis.MihwerProgressHeatmap.build({today:taskSlice.state?.loadedToday||zoneDate(),days:[...days.values()],extendedTasks:[],habits});
+    model.source=taskSlice.state?.auth==="authenticated"&&sources?.status==="ready"?"server-tasks-habits":"server-tasks";
+    return model;
   }
   return globalThis.MihwerProgressHeatmap.build({
     today:zoneDate(),
@@ -647,6 +651,7 @@ function calculatePrayers(forDate=selectedDate) {
     return finish({error:"prayerUnavailable"});
   }
 }
+globalThis.MihwerPrayerInputs=()=>({configuredZone:livingZone,calculate:calculatePrayers,translate:lt});
 function prayerResults() {
   const result=calculatePrayers();
   if(result.error)return `<p>${lt(result.error)}</p>`;

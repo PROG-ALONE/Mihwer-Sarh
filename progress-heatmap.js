@@ -15,6 +15,8 @@ globalThis.MihwerProgressHeatmap = (() => {
   const copy={
     ar:{
       title:"إنجاز آخر 30 يوماً",subtitle:"المهام والعادات والأنشطة والإنجازات",
+      serverTasksHabits:"حالة المهام الحالية حسب تاريخها وسجلات العادات؛ الأنشطة غير متصلة بعد.",
+      serverTasks:"حالة المهام الحالية حسب تاريخها؛ بقية المصادر غير متاحة أو غير متصلة.",
       total:"إنجاز",completed:"مكتمل",habits:"العادات",tasks:"المهام",activities:"الأنشطة",
       legend:["٢٥٪ أو أقل","٢٦–٥٠٪","٥١–٧٥٪","أكثر من ٧٥٪"],noData:"لا توجد بيانات",
       dayRecord:"سجل اليوم",back:"الإعدادات",achievement:"إنجاز",items:"عناصر",
@@ -24,6 +26,8 @@ globalThis.MihwerProgressHeatmap = (() => {
     },
     en:{
       title:"Last 30 days",subtitle:"Tasks, habits, activities and achievements",
+      serverTasksHabits:"Current task status by task date and recorded habits; activities are not connected yet.",
+      serverTasks:"Current task status by task date; other sources are unavailable or not connected yet.",
       total:"Achievements",completed:"Completed",habits:"Habits",tasks:"Tasks",activities:"Activities",
       legend:["25% or less","26–50%","51–75%","Over 75%"],noData:"No data",
       dayRecord:"Daily record",back:"Settings",achievement:"Achievements",items:"items",
@@ -121,7 +125,7 @@ globalThis.MihwerProgressHeatmap = (() => {
     }).join("")}`;
     const percent=model.percent===null?"—":`<span data-progress-count="${model.percent}">0</span>%`;
     return `<section class="progress-heatmap" aria-labelledby="progress-heatmap-title">
-      <header class="progress-heatmap-head"><div><p class="eyebrow">${escape(labels.streak)}</p><h3 id="progress-heatmap-title">${escape(labels.title)}</h3><p>${escape(labels.subtitle)}</p></div><strong class="progress-heatmap-rate">${percent}</strong></header>
+      <header class="progress-heatmap-head"><div><p class="eyebrow">${escape(labels.streak)}</p><h3 id="progress-heatmap-title">${escape(labels.title)}</h3><p>${escape(model.source==="server-tasks-habits"?labels.serverTasksHabits:model.source==="server-tasks"?labels.serverTasks:labels.subtitle)}</p></div><strong class="progress-heatmap-rate">${percent}</strong></header>
       <div class="progress-heatmap-summary" aria-label="${escape(labels.total)}"><span>${escape(labels.total)}</span><b><span data-progress-count="${model.totals.completed}">0</span><small> / ${model.totals.total}</small></b></div>
       <div class="progress-heatmap-grid" role="group" aria-label="${escape(labels.title)}"><div class="progress-heatmap-weekdays">${weekdayLabels}</div><div class="progress-heatmap-days" style="--heatmap-leading:${lead}">${cells}</div></div>
       <div class="progress-heatmap-legend">${labels.legend.map((item,index)=>`<span><i class="level-${["low","mid","high","full"][index]}"></i>${escape(item)}</span>`).join("")}<span><i class="level-none"></i>${escape(labels.noData)}</span></div>

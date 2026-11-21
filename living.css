@@ -1,5 +1,16 @@
 html { scroll-behavior:auto; }
 .living-scene { padding-top: 8px; }
+.daily-start { margin-bottom:20px; }
+.daily-start summary { cursor:pointer; }
+.daily-start summary strong,.daily-start summary small { display:block; }
+.daily-start summary small { color:var(--muted); margin-top:3px; }
+.daily-start-counts { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
+.daily-start-counts span { background:var(--surface2); border:1px solid var(--line); border-radius:12px; padding:8px 12px; }
+.daily-start-list { display:grid; gap:8px; padding-inline-start:24px; }
+.daily-start-item { padding:8px 0; overflow-wrap:anywhere; }
+.daily-start-item .options { margin-top:7px; }
+.daily-start-item button { font-size:12px; padding:7px 10px; }
+.daily-start-yesterday { border-top:1px solid var(--line); margin-top:16px; padding-top:16px; }
 .journey-utility { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; margin:0 0 22px; padding:10px; border:1px solid var(--line); background:var(--surface); border-radius:16px; }
 .journey-utility-actions { display:flex; gap:6px; flex-wrap:wrap; }
 .journey-utility-actions button { padding:7px 10px; font-size:12px; }

@@ -208,3 +208,144 @@ test("isolated Mihwar API prevents cross-user task access and owner forgery",
       if (createdJourney) await archiveTemporaryJourney(request, journey.id);
     }
   });
+
+test("isolated Mihwar API filters habit records and overlapping events without exposing another user's data",
+  { skip: !(configured && secondBearerToken) && "Requires two distinct identities in an isolated test deployment" },
+  async () => {
+    if (secondBearerToken === bearerToken) {
+      throw new Error("The two test identities must use distinct tokens");
+    }
+    const base = integrationBase();
+    const request = authenticatedRequest(base, bearerToken);
+    const stamp = `daily-sources-${randomUUID()}`;
+    const { journey, created: createdJourney } = await activeJourney(request, stamp);
+    let habit;
+    const events = [];
+    try {
+      const createdHabits = await request("habits", "POST", {
+        body: { journey_id: journey.id, name: stamp, start_date: "2026-03-01" }
+      });
+      assert.equal(createdHabits.length, 1);
+      habit = createdHabits[0];
+      const records = [];
+      for (const localDate of ["2026-03-10", "2026-03-11"]) {
+        const created = await request("habit-records", "POST", {
+          body: { habit_id: habit.id, local_date: localDate, status: "completed", amount: 1 }
+        });
+        assert.equal(created.length, 1);
+        records.push(created[0]);
+      }
+      const duplicate = await rawRequest(base, bearerToken, "habit-records", "POST", {
+        body: { habit_id: habit.id, local_date: "2026-03-10", status: "completed" }
+      });
+      assert.equal(duplicate.response.status, 409);
+      assert.equal(duplicate.payload?.error?.code, "version_conflict");
+
+      const recordWindow = {
+        journey_id: journey.id, local_date_from: "2026-03-10", local_date_to: "2026-03-10"
+      };
+      const included = await request("habit-records", "GET", { query: { id: records[0].id, ...recordWindow } });
+      const excluded = await request("habit-records", "GET", { query: { id: records[1].id, ...recordWindow } });
+      assert.deepEqual(included.map(row => row.id), [records[0].id]);
+      assert.deepEqual(excluded, []);
+      const wrongJourney = await request("habit-records", "GET", { query: {
+        id: records[0].id, ...recordWindow, journey_id: "00000000-0000-4000-8000-000000000099"
+      } });
+      assert.deepEqual(wrongJourney, []);
+      const revisions = await request("habit-revisions", "POST", { body: {
+        habit_id: habit.id, effective_date: "2026-03-11", frequency: "daily",
+        days: [0, 1, 2, 3, 4, 5, 6], target: 1, unit: "times"
+      } });
+      assert.equal(revisions.length, 1);
+      const futureRevision = await request("habit-revisions", "GET", { query: {
+        id: revisions[0].id, journey_id: journey.id, effective_date_to: "2026-03-10"
+      } });
+      assert.deepEqual(futureRevision, []);
+      const effectiveRevision = await request("habit-revisions", "GET", { query: {
+        id: revisions[0].id, journey_id: journey.id, effective_date_to: "2026-03-11"
+      } });
+      assert.equal(effectiveRevision[0]?.id, revisions[0].id);
+      const updated = await request("habit-records", "PATCH", {
+        query: { id: records[0].id, expected_version: records[0].version },
+        body: { status: "partial" }
+      });
+      assert.equal(updated[0].status, "partial");
+      assert.equal(updated[0].version, records[0].version + 1);
+      const stale = await rawRequest(base, bearerToken, "habit-records", "PATCH", {
+        query: { id: records[0].id, expected_version: records[0].version },
+        body: { status: "skipped" }
+      });
+      assert.equal(stale.response.status, 409);
+      const crossUpdate = await rawRequest(base, secondBearerToken, "habit-records", "PATCH", {
+        query: { id: records[0].id, expected_version: updated[0].version },
+        body: { status: "skipped" }
+      });
+      assert.ok([403, 404, 409].includes(crossUpdate.response.status));
+
+      for (const [startAt, endAt] of [
+        ["2026-03-09T23:30:00Z", "2026-03-10T00:30:00Z"],
+        ["2026-03-09T23:00:00Z", "2026-03-10T00:00:00Z"]
+      ]) {
+        const created = await request("calendar-events", "POST", {
+          body: { journey_id: journey.id, title: stamp, start_at: startAt, end_at: endAt, time_zone: "UTC" }
+        });
+        assert.equal(created.length, 1);
+        events.push(created[0]);
+      }
+      const eventWindow = {
+        journey_id: journey.id,
+        overlap_from: "2026-03-10T00:00:00.000Z",
+        overlap_to: "2026-03-11T00:00:00.000Z"
+      };
+      const overlapping = await request("calendar-events", "GET", { query: { id: events[0].id, ...eventWindow } });
+      const touching = await request("calendar-events", "GET", { query: { id: events[1].id, ...eventWindow } });
+      assert.deepEqual(overlapping.map(row => row.id), [events[0].id]);
+      assert.deepEqual(touching, []);
+
+      const eventVersion = events[0].version;
+      const renamed = await request("calendar-events", "PATCH", {
+        query: { id: events[0].id, expected_version: eventVersion },
+        body: { title: `${stamp}-renamed` }
+      });
+      assert.equal(renamed[0].title, `${stamp}-renamed`);
+      assert.equal(renamed[0].version, eventVersion + 1);
+      events[0] = renamed[0];
+      const reloaded = await request("calendar-events", "GET", { query: { id: events[0].id, ...eventWindow } });
+      assert.equal(reloaded[0]?.title, `${stamp}-renamed`);
+      const staleEvent = await rawRequest(base, bearerToken, "calendar-events", "PATCH", {
+        query: { id: events[0].id, expected_version: eventVersion }, body: { title: "Stale name" }
+      });
+      assert.equal(staleEvent.response.status, 409);
+      const crossEventUpdate = await rawRequest(base, secondBearerToken, "calendar-events", "PATCH", {
+        query: { id: events[0].id, expected_version: events[0].version }, body: { title: "Unauthorized name" }
+      });
+      assert.ok([403, 404, 409].includes(crossEventUpdate.response.status));
+      const unchangedEvent = await request("calendar-events", "GET", { query: { id: events[0].id } });
+      assert.equal(unchangedEvent[0]?.title, `${stamp}-renamed`);
+
+      for (const [resource, id, query] of [
+        ["habit-records", records[0].id, recordWindow],
+        ["calendar-events", events[0].id, eventWindow]
+      ]) {
+        const crossRead = await rawRequest(base, secondBearerToken, resource, "GET", {
+          query: { id, ...query }
+        });
+        assert.equal(crossRead.response.status, 200);
+        assert.deepEqual(crossRead.payload?.data, []);
+      }
+    } finally {
+      for (const event of events) {
+        await request("calendar-events", "PATCH", {
+          query: { id: event.id, expected_version: event.version },
+          body: { deleted_at: new Date().toISOString() }
+        });
+      }
+      if (habit) {
+        await request("habits", "PATCH", {
+          query: { id: habit.id, expected_version: habit.version },
+          body: { status: "archived", deleted_at: new Date().toISOString() }
+        });
+      }
+      if (createdJourney) await archiveTemporaryJourney(request, journey.id);
+    }
+  });

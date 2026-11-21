@@ -168,6 +168,103 @@ test("task cursor and date filters remain owner-scoped and reject malformed rang
   } }))).status, 400);
 });
 
+test("daily habit and calendar windows are validated and remain owner-scoped", async () => {
+  let requestUrl;
+  const handler = await createHandler({
+    provider: createTestIdentityProvider(),
+    profileResolver: async () => ({ id: userA, status: "active" }),
+    env: { MIHWAR_SUPABASE_URL: "https://mihwar.test.invalid", MIHWAR_SUPABASE_ANON_KEY: "public-test-key" },
+    fetchImpl: async (url) => {
+      requestUrl = new URL(url);
+      return jsonResponse([]);
+    }
+  });
+
+  const journeyId = "00000000-0000-4000-8000-000000000011";
+  const habitRange = { journey_id: journeyId, local_date_from: "2026-10-23", local_date_to: "2026-11-21" };
+  assert.equal((await handler(request("GET", "habit-records", { query: habitRange }))).status, 200);
+  assert.equal(requestUrl.searchParams.get("owner_id"), `eq.${userA}`);
+  assert.equal(requestUrl.searchParams.get("and"), "(local_date.gte.2026-10-23,local_date.lte.2026-11-21)");
+  assert.equal(requestUrl.searchParams.get("select"), "*,habits!inner(journey_id)");
+  assert.equal(requestUrl.searchParams.get("habits.journey_id"), `eq.${journeyId}`);
+
+  assert.equal((await handler(request("GET", "habit-revisions", { query: {
+    journey_id: journeyId, effective_date_to: "2026-11-21"
+  } }))).status, 200);
+  assert.equal(requestUrl.searchParams.get("effective_date"), "lte.2026-11-21");
+  assert.equal(requestUrl.searchParams.get("habits.journey_id"), `eq.${journeyId}`);
+
+  const eventRange = { overlap_from: "2026-11-20T00:00:00.000Z", overlap_to: "2026-11-23T00:00:00.000Z" };
+  assert.equal((await handler(request("GET", "calendar-events", { query: eventRange }))).status, 200);
+  assert.equal(requestUrl.searchParams.get("and"),
+    "(start_at.lt.2026-11-23T00:00:00.000Z,end_at.gt.2026-11-20T00:00:00.000Z)");
+
+  for (const [resource, query] of [
+    ["habit-records", { journey_id: "" }],
+    ["habit-records", { journey_id: [journeyId, journeyId] }],
+    ["habit-records", { ...habitRange, local_date_from: ["2026-10-23", "2026-10-24"] }],
+    ["habit-records", { local_date_from: "2026-11-22", local_date_to: "2026-11-21" }],
+    ["habit-records", { local_date_from: "2025-01-01", local_date_to: "2026-11-21" }],
+    ["habit-revisions", { effective_date_to: "2026-02-31" }],
+    ["habits", { effective_date_to: "2026-11-21" }],
+    ["tasks", habitRange],
+    ["calendar-events", { overlap_from: "2026-02-31T00:00:00.000Z", overlap_to: eventRange.overlap_to }],
+    ["calendar-events", { overlap_from: eventRange.overlap_to, overlap_to: eventRange.overlap_from }],
+    ["calendar-events", { overlap_from: "2026-01-01T00:00:00.000Z", overlap_to: "2026-02-01T00:00:00.000Z" }],
+    ["habits", eventRange]
+  ]) {
+    assert.equal((await handler(request("GET", resource, { query }))).status, 400);
+  }
+});
+
+test("habit progress updates only allowed fields with owner and version constraints", async () => {
+  const id = "00000000-0000-4000-8000-000000000063";
+  let url;
+  let sent;
+  let calls = 0;
+  const handler = await createHandler({
+    provider: createTestIdentityProvider(),
+    profileResolver: async () => ({ id: userA, status: "active" }),
+    env: { MIHWAR_SUPABASE_URL: "https://mihwar.test.invalid", MIHWAR_SUPABASE_ANON_KEY: "public-test-key" },
+    fetchImpl: async (target, options) => {
+      calls += 1;
+      url = new URL(target);
+      sent = JSON.parse(options.body);
+      return jsonResponse([{ id, version: 2 }]);
+    }
+  });
+  const query = { id, expected_version: "1" };
+  assert.equal((await handler(request("PATCH", "habit-records", { query, body: { status: "completed" } }))).status, 200);
+  assert.equal(url.searchParams.get("owner_id"), `eq.${userA}`);
+  assert.equal(url.searchParams.get("id"), `eq.${id}`);
+  assert.equal(url.searchParams.get("version"), "eq.1");
+  assert.deepEqual(sent, { status: "completed" });
+  for (const body of [
+    { habit_id: "00000000-0000-4000-8000-000000000030" },
+    { local_date: "2026-11-20" },
+    { recorded_at: "2026-11-20T00:00:00Z" }
+  ]) {
+    assert.equal((await handler(request("PATCH", "habit-records", { query, body }))).status, 400);
+  }
+  assert.equal(calls, 1);
+});
+
+test("duplicate daily habit records return a conflict instead of a second success", async () => {
+  const handler = await createHandler({
+    provider: createTestIdentityProvider(),
+    profileResolver: async () => ({ id: userA, status: "active" }),
+    env: { MIHWAR_SUPABASE_URL: "https://mihwar.test.invalid", MIHWAR_SUPABASE_ANON_KEY: "public-test-key" },
+    fetchImpl: async () => jsonResponse({ code: "23505" }, 409)
+  });
+  const result = await handler(request("POST", "habit-records", { body: {
+    habit_id: "00000000-0000-4000-8000-000000000030",
+    local_date: "2026-11-21",
+    status: "completed"
+  } }));
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error.code, "version_conflict");
+});
+
 test("create forces the verified owner and rejects attempts to supply ownership", async () => {
   const provider = createTestIdentityProvider();
   let posted;
@@ -187,6 +284,11 @@ test("create forces the verified owner and rejects attempts to supply ownership"
   const spoofed = await handler(request("POST", "notes", { body: { owner_id: "00000000-0000-4000-8000-000000000002", kind: "note", body: "x" } }));
   assert.equal(spoofed.status, 400);
   assert.equal(spoofed.body.error.code, "owner_fields_are_server_managed");
+  for (const key of ["user_id", "mihwer_user_id", "mihwar_user_id"]) {
+    const forged = await handler(request("POST", "notes", { body: { [key]: userA, kind: "note", body: "x" } }));
+    assert.equal(forged.status, 400);
+    assert.equal(forged.body.error.code, "owner_fields_are_server_managed");
+  }
 });
 
 test("updates require an expected version and report conflicts without overwriting", async () => {
