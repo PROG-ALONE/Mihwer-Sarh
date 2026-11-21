@@ -1,5 +1,32 @@
 # تقرير ربط واجهة مِحوَر بـAPI
 
+## تحديث جولة الإكمال: Supabase المستضاف وPreview ولوحة المالك (21 نوفمبر 2026)
+
+- **قاعدة البيانات المستضافة:** المشروع `cakgrvanujcosglfuzcl`. طُبّقت الترحيلات الخمسة فعلياً، ونجح pgTAP المستضاف 145/145. التفاصيل في [تقرير التقدم](./MIHWAR-IMPLEMENTATION-PROGRESS.md).
+- **متغيرات Vercel للتطبيق:** `MIHWAR_SUPABASE_URL` و`MIHWAR_SUPABASE_ANON_KEY` في Production وPreview وDevelopment. لا مفاتيح إدارة في الواجهة أو المستودع.
+- **مسارات جديدة على `/api/v1/access`** وكلها تتطلب هوية صَرح وصلاحية مالك يتحقق منها PostgreSQL:
+  - `GET`: `admin-status`، `admin-overview`، `admin-codes`، `admin-redemptions`، `admin-discounts`، `admin-audit`.
+  - `POST`: `admin-issue-code`، `admin-disable-code`، `admin-grant`، `admin-suspend`، `admin-issue-discount`، `admin-disable-discount`.
+- **الواجهة:** [frontend/owner-panel.js](./frontend/owner-panel.js) يُركَّب داخل نافذة الإعدادات من [living.js](./living.js).
+  - يتحقق أولاً من `admin-status`، ولا يعرض شيئاً إذا لم يؤكد الخادم المالك.
+  - يعرض الكود الصادر مرة واحدة فقط، ثم يحذفه من الحالة بعد العملية التالية.
+  - لا يعرض «تم الحفظ» إلا بعد نجاح الخادم.
+- **الملفات المعدلة في هذه الجولة:**
+  - [api/_lib/access.js](./api/_lib/access.js) و[api/access.test.cjs](./api/access.test.cjs)
+  - [frontend/owner-panel.js](./frontend/owner-panel.js) و[frontend/owner-panel.test.cjs](./frontend/owner-panel.test.cjs)
+  - [living.js](./living.js) (سطر التركيب فقط)
+  - [index.html](./index.html) و[scripts/prepare-static-assets.cjs](./scripts/prepare-static-assets.cjs) و[cards.css](./cards.css)
+  - [supabase/migrations/20261122000000_owner_admin.sql](./supabase/migrations/20261122000000_owner_admin.sql)
+  - [supabase/tests/mihwar_owner_admin.test.sql](./supabase/tests/mihwar_owner_admin.test.sql)
+  - لم يُعدّل المحرك الفلكي ولا المحفّز القديم.
+- **النتائج:**
+  - Node الافتراضي: 193 إجمالاً، 189 ناجحاً، 0 فشل، 4 متخطاة.
+  - Node مع التكامل المحلي: 193/193.
+  - pgTAP: 145/145 محلياً و145/145 مستضافاً.
+  - مسار المالك الحقيقي محلياً: 14/14.
+  - Preview المحمي `https://mihwer-sarh-g4d4939i2-prog-alone.vercel.app` على 390 و1440 بكسل: العروض الأربعة والإعدادات تعمل، ولوحة المالك مخفية، و0 أخطاء Console.
+- **الحالة الصادقة:** الواجهة ما زالت تعرض بيانات الخادم في شريحة المهام والعادات وبداية اليوم والمواعيد فقط. الوحدات الأخرى غير متصلة (انظر جدول الوحدات في تقرير التقدم). لا يستطيع أي مستخدم حقيقي الدخول قبل عقد SSO من صَرح.
+
 ## تحديث استعادة «رحلتي» وفصل المسارات (21 نوفمبر 2026)
 
 - **السبب الحقيقي:** شرط غير مقيد بالشاشة في [app.js](./app.js) كان يستبدل الصفحة الأصلية بشريحة API كلما توفر `MihwarTaskSlice`، ويعطّل القائمتين. الصفحة ورابطها لم يُحذفا؛ لم يتغير هذا الملف بين `main` وفرع العمل قبل الإصلاح. الشرط يعود إلى commit `8559079` ويشمل نقطة البداية `1ddaf3d`، وليس تراجعاً ناتجاً عن آخر تغييرات المواعيد.
