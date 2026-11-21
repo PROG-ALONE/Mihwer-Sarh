@@ -2,7 +2,7 @@ begin;
 
 set local search_path = public, extensions;
 
-select extensions.plan(43);
+select extensions.plan(50);
 
 insert into public.mihwer_users(id) values
   ('00000000-0000-4000-8000-000000000101'),
@@ -300,6 +300,70 @@ select extensions.is(
   public.start_own_trial() ->> 'status',
   'suspended',
   'restarting a trial does not bypass suspension'
+);
+
+reset role;
+insert into public.activation_codes(id, code_hash, duration_days, max_uses, created_by)
+values (
+  '00000000-0000-4000-8000-000000000133', decode(repeat('ef', 32), 'hex'), 2, 1,
+  '00000000-0000-4000-8000-000000000101'
+);
+set local role authenticated;
+select extensions.throws_ok(
+  $$select public.redeem_activation_code(decode(repeat('ef', 32), 'hex'))$$,
+  '42501', null,
+  'a suspended account cannot redeem an activation code'
+);
+reset role;
+select extensions.is(
+  (select use_count from public.activation_codes where id = '00000000-0000-4000-8000-000000000133'),
+  0,
+  'a suspended redemption does not consume a code use'
+);
+select extensions.is(
+  (select count(*)::integer from public.activation_redemptions
+    where code_id = '00000000-0000-4000-8000-000000000133'),
+  0,
+  'a suspended redemption does not create a redemption record'
+);
+update public.user_access set suspended_at = null
+where owner_id = '00000000-0000-4000-8000-000000000101';
+set local role authenticated;
+select extensions.is(
+  public.redeem_activation_code(decode(repeat('ef', 32), 'hex')) ->> 'status',
+  'activated',
+  'the same code remains usable after suspension is lifted'
+);
+
+reset role;
+insert into public.mihwer_users(id) values ('00000000-0000-4000-8000-000000000103');
+insert into public.user_access(owner_id, suspended_at)
+values ('00000000-0000-4000-8000-000000000103', statement_timestamp());
+set local role authenticated;
+select set_config(
+  'request.jwt.claims',
+  '{"role":"authenticated","mihwer_user_id":"00000000-0000-4000-8000-000000000103"}',
+  true
+);
+select extensions.is(
+  public.start_own_trial() ->> 'status',
+  'suspended',
+  'a suspended account cannot start its trial'
+);
+reset role;
+select extensions.is(
+  (select trial_started_at from public.user_access
+    where owner_id = '00000000-0000-4000-8000-000000000103'),
+  null::timestamptz,
+  'suspension does not consume an unused trial'
+);
+update public.user_access set suspended_at = null
+where owner_id = '00000000-0000-4000-8000-000000000103';
+set local role authenticated;
+select extensions.is(
+  public.start_own_trial() ->> 'status',
+  'trial_active',
+  'an unused trial can start after suspension is lifted'
 );
 
 select * from extensions.finish();
