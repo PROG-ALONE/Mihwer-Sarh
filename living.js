@@ -1426,7 +1426,7 @@ document.addEventListener("click",event=>{
   if(utility==="date"){dialogTitle.textContent=lt("dateTab");dialogContent.innerHTML=datePanel();dialog.showModal();return;}
   if(utility==="today-direct"){setJourneyDate(zoneDate());return;}
   if(utility==="today"){setJourneyDate(zoneDate());dialogContent.innerHTML=datePanel();return;}
-  if(utility==="settings"){dialogTitle.textContent=lt("settingsTab");dialogContent.innerHTML=clockPanel();if(!dialog.open)dialog.showModal();MihwerProgressHeatmap.animate(dialogContent,language);updateScene();return;}
+  if(utility==="settings"){dialogTitle.textContent=lt("settingsTab");dialogContent.innerHTML=clockPanel();if(!dialog.open)dialog.showModal();MihwerProgressHeatmap.animate(dialogContent,language);updateScene();globalThis.MihwerOwnerPanel?.mount(dialogContent,language);return;}
   if(utility==="prayers"){prayerEditing=false;dialogTitle.textContent=lt("prayers");dialogContent.innerHTML=prayerPanel();dialog.showModal();return;}
   if(utility==="prayer-settings"){prayerEditing=true;dialogTitle.textContent=lt("prayerSettings");dialogContent.innerHTML=prayerPanel();if(!dialog.open)dialog.showModal();return;}
   if(utility==="prayer-view"){prayerEditing=false;dialogTitle.textContent=lt("prayers");dialogContent.innerHTML=prayerPanel();return;}

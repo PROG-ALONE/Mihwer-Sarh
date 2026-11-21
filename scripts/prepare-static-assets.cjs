@@ -23,6 +23,7 @@ const STATIC_FILES = [
   "frontend/prayer-summary.js",
   "frontend/daily-summary.js",
   "frontend/task-slice.js",
+  "frontend/owner-panel.js",
   "app.js",
   "extended-validation.js",
   "progress-contract.js",
