@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>مِحوَر — استوديو الرحلة</title>
+  <script defer src="scroll-gesture.js"></script>
+  <script defer src="system-log.js"></script>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="roadmap.css">
+  <link rel="stylesheet" href="living.css">
+  <link rel="stylesheet" href="paths-lab.css">
+  <link rel="stylesheet" href="organizer.css">
+  <link rel="stylesheet" href="cards.css">
+  <link rel="stylesheet" href="journey-world.css">
+  <link rel="stylesheet" href="immersive-journey.css">
+  <script defer src="vendor/adhan.umd.min.js"></script>
+  <script defer src="frontend/api-client.js"></script>
+  <script defer src="frontend/task-repository.js"></script>
+  <script defer src="frontend/task-slice.js"></script>
+  <script defer src="app.js"></script>
+  <script defer src="extended-validation.js"></script>
+  <script defer src="progress-contract.js"></script>
+  <script defer src="progress-adapters.js"></script>
+  <script defer src="progress-engine.js"></script>
+  <script defer src="journey-timeline.js"></script>
+  <script defer src="celestial.js"></script>
+  <script defer src="task-priority.js"></script>
+  <script defer src="station-task-archive.js"></script>
+  <script defer src="living.js"></script>
+  <script defer src="extended-lifecycle.js"></script>
+  <script defer src="habit-engine.js"></script>
+  <script defer src="paths-lab.js"></script>
+  <script defer src="organizer.js"></script>
+  <script defer src="habit-ui.js"></script>
+  <script defer src="progress-heatmap.js"></script>
+  <script defer src="immersive-journey.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="#day" data-screen="day"><span class="brand-icon">◈</span><span><b>مِحوَر</b><small>MIHWER / DESIGN LAB</small></span></a>
+      <nav class="main-nav" aria-label="التصاميم" data-text-aria="navLabel">
+        <button data-screen="day" data-text="journey"></button>
+        <button data-screen="activities" data-text="practices"></button>
+        <button data-screen="paths" data-text="paths"></button>
+        <button data-screen="organizer" data-text="organizerTitle"></button>
+        <button data-utility="settings" data-text-aria="settingsLabel"><span aria-hidden="true">⚙</span> <span data-text="settingsLabel"></span></button>
+      </nav>
+      <div class="top-actions">
+        <button class="circle" id="open-search" aria-label="بحث" data-text-aria="search">⌕</button>
+        <button class="circle" id="open-voice" aria-label="الصوت" data-text-aria="voice">♩</button>
+        <button class="add" id="open-add"><span>＋</span> <span data-text="add"></span></button>
+      </div>
+    </header>
+    <div class="notice"><span>✦</span> <span data-text="prototypeNotice"></span></div>
+    <main>
+      <div id="view"></div>
+    </main>
+    <nav class="mobile-nav" aria-label="التصاميم" data-text-aria="navLabel">
+      <button data-screen="day"><span>◈</span><span data-text="journey"></span></button>
+      <button data-screen="activities"><span>✓</span><span data-text="practices"></span></button>
+      <button data-screen="paths"><span>✳</span><span data-text="goals"></span></button>
+      <button data-screen="organizer" data-text-aria="organizerTitle" aria-label="المشتريات والاشتراكات"><span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h2l2.2 10.1a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 1.9-1.4L21 8H5.2"/><circle cx="9" cy="19" r="1"/><circle cx="17" cy="19" r="1"/></svg></span><span data-text="organizerNav"></span></button>
+      <button data-utility="settings" data-text-aria="settingsLabel"><span aria-hidden="true">⚙</span><span data-text="settingsLabel"></span></button>
+    </nav>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title"><div class="dialog-head"><h2 id="dialog-title"></h2><button id="dialog-close" class="circle" aria-label="إغلاق" data-text-aria="close">×</button></div><div id="dialog-content" tabindex="0" role="region" aria-labelledby="dialog-title"></div></dialog>
+</body>
+</html>

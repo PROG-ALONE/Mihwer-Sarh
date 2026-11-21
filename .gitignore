@@ -1,0 +1,24 @@
+# Local environment and generated platform state
+.env
+.env.*
+!.env.example
+.vercel/
+supabase/.temp/
+node_modules/
+public/
+vendor/
+
+# Local machine and browser-test artifacts
+.DS_Store
+chrome-profile*/
+living-evidence/
+quality-evidence/
+*.log
+*.har
+*.trace
+*.mp4
+*.mov
+*.webm
+/*.png
+/*.jpg
+/*.jpeg

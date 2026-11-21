@@ -1,0 +1,17 @@
+{
+  "private": true,
+  "name": "mihwer-journey",
+  "version": "1.0.0",
+  "description": "Mihwar journey application and secure persistence foundation",
+  "scripts": {
+    "build": "node scripts/prepare-static-assets.cjs",
+    "test": "node --test *.test.cjs api/*.test.cjs frontend/*.test.cjs",
+    "test:backend": "NODE_ENV=test node --test api/*.test.cjs",
+    "test:integration": "node --test frontend/server.integration.test.cjs",
+    "test:db": "supabase test db supabase/tests",
+    "check:backend": "node --check api/_lib/identity.js && node --check api/_lib/mihwar-data.js && node --check api/_lib/access.js && node --check 'api/v1/[resource].js' && node --check api/v1/access.js"
+  },
+  "dependencies": {
+    "adhan": "4.4.6"
+  }
+}

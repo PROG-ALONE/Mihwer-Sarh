@@ -1,0 +1,105 @@
+"use strict";
+const test=require("node:test");
+const assert=require("node:assert/strict");
+require("./extended-validation.js");require("./progress-engine.js");require("./habit-engine.js");
+const e=globalThis.MihwerHabitEngine;
+const base=()=>({name:"Walk",start:"2026-11-15",end:"2026-11-30",frequency:"weekly",days:[0,2],target:2,unit:"km",records:{}});
+test("weekly scheduling observes weekdays and inclusive bounds",()=>{
+  assert.equal(e.scheduled(base(),"2026-11-15"),true);
+  assert.equal(e.scheduled(base(),"2026-11-16"),false);
+  assert.equal(e.scheduled(base(),"2026-11-17"),true);
+  assert.equal(e.scheduled(base(),"2026-12-01"),false);
+  assert.throws(()=>e.validate({...base(),days:[]}));
+});
+test("independent records and unknown days do not count as failure",()=>{
+  let h=e.record(base(),"2026-11-15","2026-11-20","completed",2);
+  h=e.record(h,"2026-11-17","2026-11-20","incomplete",1);
+  h=e.record(h,"2026-11-15","2026-11-20","exempt",0);
+  assert.equal(h.records["2026-11-17"].amount,1);
+  const s=e.summary(h,["2026-11-15","2026-11-17","2026-11-22"],"2026-11-20");
+  assert.deepEqual(s,{complete:0,incomplete:1,exempt:1,unrecorded:0,ratio:0});
+  assert.throws(()=>e.record(h,"2026-11-22","2026-11-20","completed",2));
+  assert.throws(()=>e.record(h,"2026-11-17","2026-11-20","completed",1));
+  assert.equal(e.summary(base(),["2026-11-15"],"2026-11-20").ratio,null);
+});
+test("summary counts each date once and rejects invalid period dates",()=>{
+  const h=e.record(base(),"2026-11-15","2026-11-20","completed",2);
+  const s=e.summary(h,["2026-11-15","2026-11-15","2026-11-17"],"2026-11-20");
+  assert.deepEqual(s,{complete:1,incomplete:0,exempt:0,unrecorded:1,ratio:1});
+  assert.throws(()=>e.summary(h,["9999-99-99"],"2026-11-20"));
+});
+test("unrecord removes one scheduled day without mutating the original habit",()=>{
+  const recorded=e.record(base(),"2026-11-15","2026-11-20","completed",2);
+  const next=e.unrecord(recorded,"2026-11-15");
+  assert.deepEqual(Object.keys(next.records),[]);
+  assert.equal(recorded.records["2026-11-15"].status,"completed");
+  assert.throws(()=>e.unrecord(next,"2026-11-15"),/not found/);
+  assert.throws(()=>e.unrecord(recorded,"2026-11-16"),/Day unavailable/);
+});
+test("quantity adjustments move toward the target and can be reversed",()=>{
+  const original=base();
+  const partial=e.adjust(original,"2026-11-15","2026-11-20",1);
+  assert.deepEqual(partial.records["2026-11-15"],{status:"incomplete",amount:1});
+  const completed=e.adjust(partial,"2026-11-15","2026-11-20",1);
+  assert.deepEqual(completed.records["2026-11-15"],{status:"completed",amount:2});
+  const reversed=e.adjust(completed,"2026-11-15","2026-11-20",-1);
+  assert.deepEqual(reversed.records["2026-11-15"],{status:"incomplete",amount:1});
+  assert.deepEqual(original.records,{});
+  assert.throws(()=>e.adjust(original,"2026-11-16","2026-11-20",1),/Day unavailable/);
+  assert.throws(()=>e.adjust(original,"2026-11-15","2026-11-20",0),/Invalid adjustment/);
+});
+test("revisions preserve historical schedule, targets, records and future restrictions",()=>{
+  let h=e.record(base(),"2026-11-15","2026-11-17","completed",2);
+  h=e.record(h,"2026-11-17","2026-11-17","incomplete",1);
+  const before=JSON.stringify(h.records);
+  h=e.revise(h,{frequency:"weekly",days:[3],target:5,unit:"pages"},"2026-11-17");
+  assert.equal(JSON.stringify(h.records),before);
+  assert.equal(e.scheduled(h,"2026-11-15"),true);
+  assert.equal(e.scheduled(h,"2026-11-17"),true);
+  assert.equal(e.scheduled(h,"2026-11-18"),true);
+  assert.equal(e.scheduled(h,"2026-11-24"),false);
+  assert.equal(e.definitionAt(h,"2026-11-17").target,2);
+  assert.equal(e.definitionAt(h,"2026-11-18").target,5);
+  assert.deepEqual(e.summary(h,["2026-11-15","2026-11-17","2026-11-18"],"2026-11-18"),{complete:1,incomplete:1,exempt:0,unrecorded:1,ratio:.5});
+  assert.throws(()=>e.record(h,"2026-11-18","2026-11-17","completed",5));
+  assert.throws(()=>e.record(h,"2026-11-17","2026-11-18","completed",1));
+  assert.throws(()=>e.record(h,"2026-11-18","2026-11-18","completed",2));
+  h=e.record(h,"2026-11-18","2026-11-18","completed",5);
+  assert.equal(h.records["2026-11-15"].amount,2);
+  assert.equal(h.records["2026-11-17"].amount,1);
+});
+test("same-day changes replace only the pending revision and invalid changes do not mutate data",()=>{
+  const original=base();
+  let h=e.revise(original,{frequency:"daily",days:[],target:4,unit:"cups"},"2026-11-17");
+  h=e.revise(h,{frequency:"weekly",days:[4],target:3,unit:"km"},"2026-11-17");
+  assert.equal(h.revisions.length,1);
+  assert.equal(e.definitionAt(h,"2026-11-18").target,3);
+  assert.throws(()=>e.revise(h,{frequency:"weekly",days:[],target:0,unit:""},"2026-11-17"));
+  assert.equal(original.revisions,undefined);
+  assert.equal(h.revisions[0].target,3);
+});
+test("period results count only recorded scheduled dates and preserve prior definitions",()=>{
+  let a={...base(),id:"a"},b={...base(),id:"b",frequency:"daily",days:[]};
+  a=e.record(a,"2026-11-15","2026-11-17","completed",2);
+  b=e.record(b,"2026-11-16","2026-11-17","incomplete",1);
+  a=e.revise(a,{frequency:"weekly",days:[3],target:9,unit:"km"},"2026-11-17");
+  const period={start:"2026-11-15",end:"2026-11-30",today:"2026-11-17"};
+  const r=e.periodSummary([a,b],period);
+  assert.deepEqual([r.complete,r.remaining,r.eligible,r.ratio],[1,1,2,.5]);
+  assert.equal(e.periodSummary([a,b],{...period,start:"2026-11-18"}).ratio,null);
+  assert.throws(()=>e.periodSummary([{...a,records:{"2026-11-16":{status:"completed"}}}],period));
+  assert.throws(()=>e.periodSummary([a,a],period),/duplicate/);
+});
+test("editing one record changes only periods that contain it",()=>{
+  let habit={...base(),id:"daily",start:"2025-12-30",frequency:"daily",days:[]};
+  habit=e.record(habit,"2025-12-31","2026-01-02","completed",2);
+  habit=e.record(habit,"2026-01-01","2026-01-02","incomplete",1);
+  const previous={start:"2025-01-01",end:"2025-12-31",today:"2026-01-02"};
+  const current={start:"2026-01-01",end:"2026-12-31",today:"2026-01-02"};
+  const before=e.periodSummary([habit],previous);
+  assert.equal(e.periodSummary([habit],current).ratio,0);
+  habit=e.record(habit,"2026-01-01","2026-01-02","completed",2);
+  assert.equal(e.periodSummary([habit],current).ratio,1);
+  assert.deepEqual(e.periodSummary([habit],previous),before);
+  assert.equal(e.periodSummary([habit],{start:"2026-01-03",end:"2026-01-09",today:"2026-01-02"}).ratio,null);
+});

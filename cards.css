@@ -1,0 +1,123 @@
+body {
+  --card-tint: color-mix(in srgb, var(--accent) 10%, var(--surface2));
+}
+
+.life-path-card,
+.activity-entry,
+.activity-card,
+.extended-card,
+.week-card,
+.tile,
+.daily-counter,
+.summary-card,
+.activity-summary-card,
+.mini-field,
+.prayer-times li,
+.calendar button {
+  min-width: 0;
+  background-color: var(--surface2);
+  background-image: none;
+  border-color: color-mix(in srgb, var(--accent) 16%, var(--line));
+}
+
+.life-path-card {
+  min-height: 150px;
+  align-content: start;
+  gap: 10px;
+  background-color: var(--card-tint);
+}
+
+.life-path-card:nth-child(3n + 2),
+.year-grid .tile:nth-child(3n + 2) {
+  background-color: color-mix(in srgb, var(--green) 8%, var(--surface2));
+}
+
+.life-path-card .activity-icon,
+.activity-entry .activity-icon,
+.extended-card .activity-icon,
+.route-open .node-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface2));
+  color: var(--accent);
+}
+
+.route-open .node-icon {
+  margin-inline-start: 8px;
+}
+
+.activity-entry.status-done,
+.activity-card.status-done {
+  border-color: var(--green);
+}
+
+.week-stop.selected-period .week-card {
+  border-color: var(--accent);
+}
+
+.calendar button.marked {
+  border-color: var(--accent);
+}
+
+.life-path-card:hover,
+.activity-entry:hover,
+.activity-card:hover,
+.extended-card:hover,
+.week-card:hover,
+button.tile:hover,
+.calendar button:hover {
+  border-color: var(--accent);
+}
+
+.life-path-card:focus-visible,
+.extended-card:focus-visible,
+.week-card:focus-visible,
+button.tile:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+
+@media (max-width: 420px) {
+  .life-path-card {
+    min-height: 135px;
+  }
+}
+
+:root {
+  --priority-urgent-important: #ff7085;
+  --priority-urgent-not-important: #ffbd70;
+  --priority-not-urgent-important: #ad8bfa;
+  --priority-not-urgent-not-important: #b8db78;
+}
+
+.priority-urgent-important { color: #69283a; background: #ffe1e7; border-color: var(--priority-urgent-important); }
+.priority-urgent-not-important { color: #70491e; background: #fff0dc; border-color: var(--priority-urgent-not-important); }
+.priority-not-urgent-important { color: #4a3479; background: #efe8ff; border-color: var(--priority-not-urgent-important); }
+.priority-not-urgent-not-important { color: #405b2c; background: #eff8df; border-color: var(--priority-not-urgent-not-important); }
+
+.activity-entry[data-priority],
+.activity-card[data-priority],
+#dialog-content .task-detail-card[data-priority] {
+  --task-priority-color: var(--priority-not-urgent-important);
+  border-color: var(--task-priority-color);
+  border-inline-start: 3px solid var(--task-priority-color);
+}
+.activity-entry[data-priority="urgent-important"],
+.activity-card[data-priority="urgent-important"],
+#dialog-content .task-detail-card[data-priority="urgent-important"] { --task-priority-color: var(--priority-urgent-important); }
+.activity-entry[data-priority="urgent-not-important"],
+.activity-card[data-priority="urgent-not-important"],
+#dialog-content .task-detail-card[data-priority="urgent-not-important"] { --task-priority-color: var(--priority-urgent-not-important); }
+.activity-entry[data-priority="not-urgent-important"],
+.activity-card[data-priority="not-urgent-important"],
+#dialog-content .task-detail-card[data-priority="not-urgent-important"] { --task-priority-color: var(--priority-not-urgent-important); }
+.activity-entry[data-priority="not-urgent-not-important"],
+.activity-card[data-priority="not-urgent-not-important"],
+#dialog-content .task-detail-card[data-priority="not-urgent-not-important"] { --task-priority-color: var(--priority-not-urgent-not-important); }
+
+.activity-entry.status-done,
+.activity-card.status-done,
+#dialog-content .task-detail-card[data-priority].status-done { box-shadow: inset 0 0 0 1px var(--green); }
