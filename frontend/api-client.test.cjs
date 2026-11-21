@@ -116,3 +116,24 @@ test("external cancellation aborts the request without retrying", async () => {
   await assert.rejects(request, error => error.code === "request_aborted");
   assert.equal(attempts, 0);
 });
+
+test("a late unauthorized response from an aborted request does not expire a new session", async () => {
+  let release;
+  let started = false;
+  const states = [];
+  const client = createApiClient({
+    sessionProvider: { async getAccessToken() { return "old-token"; } },
+    fetchImpl: async () => {
+      started = true;
+      return new Promise(resolve => { release = resolve; });
+    },
+    onAuthStateChange: state => states.push(state)
+  });
+  const controller = new AbortController();
+  const pending = client.request("tasks", { signal: controller.signal });
+  while (!started) await new Promise(resolve => setImmediate(resolve));
+  controller.abort();
+  release(jsonResponse({ error: { code: "unauthenticated" } }, 401));
+  await assert.rejects(pending, error => error.code === "request_aborted");
+  assert.deepEqual(states, []);
+});

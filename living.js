@@ -556,7 +556,7 @@ function progressHeatmapModel(){
         }]});
       }
     }
-    return globalThis.MihwerProgressHeatmap.build({today:zoneDate(),days:[...days.values()],extendedTasks:[],habits:[]});
+    return globalThis.MihwerProgressHeatmap.build({today:taskSlice.state?.loadedToday||zoneDate(),days:[...days.values()],extendedTasks:[],habits:[]});
   }
   return globalThis.MihwerProgressHeatmap.build({
     today:zoneDate(),

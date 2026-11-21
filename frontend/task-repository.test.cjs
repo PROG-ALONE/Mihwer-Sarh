@@ -96,6 +96,9 @@ test("updates use optimistic version checks and map the returned row", async () 
   assert.equal(options.expectedVersion, 1);
   assert.deepEqual(options.body, { title: "Updated task", status: "completed", deleted_at: null });
   assert.equal(updated.version, 2);
+  await repository.update(current, { priority: 3 });
+  assert.deepEqual(options.body, { priority: 3 });
+  await assert.rejects(repository.update(current, { priority: "unknown" }), /invalid_task_priority/);
 });
 
 test("timeline projection retains the original task id and does not create stored copies", () => {

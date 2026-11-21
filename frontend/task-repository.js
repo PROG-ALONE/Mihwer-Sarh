@@ -15,6 +15,12 @@
     "urgent-not-important": 4
   });
 
+  function priorityValue(value) {
+    if (Number.isInteger(value) && value >= 0 && value <= 5) return value;
+    if (typeof value === "string" && Object.hasOwn(priorityValues, value)) return priorityValues[value];
+    throw new TypeError("invalid_task_priority");
+  }
+
   function isDate(value) {
     if (typeof value !== "string" || !DATE.test(value)) return false;
     const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -140,7 +146,7 @@
           start_date: startDate,
           due_date: startDate,
           status: "active",
-          priority: priorityValues[input.priority] ?? 2,
+          priority: input.priority === undefined ? 2 : priorityValue(input.priority),
           estimate_minutes: input.estimateMinutes ?? null
         },
         signal
@@ -178,8 +184,7 @@
         else body.deleted_at = null;
       }
       if (patch.priority !== undefined) {
-        if (!(patch.priority in priorityValues)) throw new TypeError("invalid_task_priority");
-        body.priority = priorityValues[patch.priority];
+        body.priority = priorityValue(patch.priority);
       }
       if (!Object.keys(body).length) throw new TypeError("empty_task_update");
 

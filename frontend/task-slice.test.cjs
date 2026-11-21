@@ -18,6 +18,9 @@ test("trial access states offer server-backed start and redemption without expos
   assert.match(slice.render(), /data-access-start/);
   assert.match(slice.render(), /72 ساعة/);
   assert.doesNotMatch(slice.render(), /Read a chapter/);
+  slice.state.error = "access_request_failed";
+  assert.match(slice.render(), /تعذر التحقق من صلاحية الوصول/);
+  slice.state.error = "";
 
   slice.state.auth = "trial_expired";
   const expired = slice.render();
@@ -83,4 +86,131 @@ test("day, centered-week, month, and year views filter the original task source"
   assert.match(slice.render(), /Tomorrow/);
   assert.equal(slice.shiftPeriodDate("2026-01-31", "month", 1), "2026-02-28");
   assert.equal(slice.shiftPeriodDate("2024-02-29", "year", 1), "2025-02-28");
+});
+
+test("task draft and priority survive a rerender after a failed save", () => {
+  slice.state.auth = "authenticated";
+  slice.state.journey = {
+    id: "00000000-0000-4000-8000-000000000011",
+    title: "My journey", timeZone: "UTC", status: "active"
+  };
+  slice.state.selectedDate = "2026-11-20";
+  slice.state.period = "day";
+  slice.state.tasks = [];
+  slice.state.editing = "new";
+  slice.state.draft = { title: "Keep <my> input", date: "2026-11-21", estimate: "45", priority: "5" };
+  slice.state.error = "validation_failed";
+  const html = slice.render();
+  assert.match(html, /value="Keep &lt;my&gt; input"/);
+  assert.match(html, /value="2026-11-21"/);
+  assert.match(html, /value="45"/);
+  assert.match(html, /value="5" selected/);
+  assert.match(html, /تحقق من الاسم والتاريخ والمدة/);
+  slice.state.editing = null;
+  slice.state.draft = null;
+  slice.state.error = "";
+});
+
+test("journey form preserves its draft on an unsuccessful create", () => {
+  slice.state.auth = "authenticated";
+  slice.state.journey = null;
+  slice.state.journeyDraft = "My <journey>";
+  slice.state.error = "backend_error";
+  const html = slice.render();
+  assert.match(html, /value="My &lt;journey&gt;"/);
+  assert.match(html, /role="alert"/);
+  slice.state.journeyDraft = "";
+  slice.state.error = "";
+});
+
+test("refresh fetches the selected period and recent history without loading intervening years", async () => {
+  const requested = [];
+  const journey = {
+    id: "00000000-0000-4000-8000-000000000011",
+    title: "My journey", time_zone: "Pacific/Kiritimati", status: "active"
+  };
+  slice.state.selectedDate = "2020-01-15";
+  slice.state.period = "month";
+  slice.setApiClient({
+    baseUrl: "https://mihwar.test.invalid/api/v1",
+    sessionProvider: { async getAccessToken() { return "test-only"; } },
+    maxGetRetries: 0,
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      requested.push(parsed);
+      const data = parsed.pathname.endsWith("/access") ? { status: "trial_active" } :
+        parsed.pathname.endsWith("/journeys") ? [journey] : [];
+      return new Response(JSON.stringify({ data }), { headers: { "content-type": "application/json" } });
+    }
+  });
+  await slice.refresh();
+  assert.equal(slice.state.auth, "authenticated");
+  const ranges = requested.filter(url => url.pathname.endsWith("/tasks"));
+  assert.equal(ranges.length, 2);
+  assert.ok(ranges.some(url =>
+    url.searchParams.get("start_date_from") === "2020-01-01" &&
+    url.searchParams.get("start_date_to") === "2020-01-31"
+  ));
+  const recent = ranges.find(url => url.searchParams.get("start_date_to") !== "2020-01-31");
+  assert.equal(recent.searchParams.get("start_date_to"), slice.state.loadedToday);
+  const start = new Date(`${recent.searchParams.get("start_date_from")}T00:00:00Z`);
+  const end = new Date(`${slice.state.loadedToday}T00:00:00Z`);
+  assert.equal((end - start) / 86_400_000, 29);
+});
+
+test("a superseded refresh cannot overwrite the latest authenticated state", async () => {
+  let releaseFirst;
+  let accessCalls = 0;
+  const delayed = new Promise(resolve => { releaseFirst = resolve; });
+  const journey = {
+    id: "00000000-0000-4000-8000-000000000011",
+    title: "Latest journey", time_zone: "UTC", status: "active"
+  };
+  const response = data => new Response(JSON.stringify({ data }), { headers: { "content-type": "application/json" } });
+  slice.state.selectedDate = null;
+  slice.state.period = "day";
+  slice.setApiClient({
+    sessionProvider: { async getAccessToken() { return "test-only"; } },
+    maxGetRetries: 0,
+    fetchImpl: async url => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/access")) {
+        accessCalls += 1;
+        if (accessCalls === 1) return delayed;
+        return response({ status: "trial_active" });
+      }
+      return response(path.endsWith("/journeys") ? [journey] : []);
+    }
+  });
+  const first = slice.refresh();
+  while (accessCalls === 0) await new Promise(resolve => setImmediate(resolve));
+  await slice.refresh();
+  releaseFirst(response({ status: "suspended" }));
+  await first;
+  assert.equal(slice.state.auth, "authenticated");
+  assert.equal(slice.state.journey.title, "Latest journey");
+});
+
+test("signing out or switching session clears private tasks and unfinished drafts", async () => {
+  let notifySession;
+  const provider = {
+    async getAccessToken() { return "test-only"; },
+    subscribe(callback) { notifySession = callback; }
+  };
+  await slice.setSessionProvider(provider);
+  slice.state.tasks = [{ id: "private-task", title: "Private" }];
+  slice.state.editing = "new";
+  slice.state.draft = { title: "Private draft" };
+  notifySession(null);
+  assert.equal(slice.state.auth, "unauthenticated");
+  assert.deepEqual(slice.state.tasks, []);
+  assert.equal(slice.state.draft, null);
+  assert.equal(slice.state.editing, null);
+
+  slice.state.tasks = [{ id: "previous-user", title: "Previous user's task" }];
+  slice.state.draft = { title: "Previous user's draft" };
+  notifySession({ authenticated: true });
+  assert.deepEqual(slice.state.tasks, []);
+  assert.equal(slice.state.draft, null);
+  await new Promise(resolve => setImmediate(resolve));
 });

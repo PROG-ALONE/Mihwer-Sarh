@@ -109,6 +109,11 @@
             signal: controller.signal
           });
           const text = await response.text();
+          if (controller.signal.aborted) {
+            const code = signal?.aborted ? "request_aborted" :
+              controller.signal.reason?.message === "request_timeout" ? "request_timeout" : "request_aborted";
+            throw new ApiError(code, 0);
+          }
           const payload = parseJson(text, response.headers?.get?.("content-type"));
 
           if (!response.ok) {
