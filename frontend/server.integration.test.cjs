@@ -219,16 +219,20 @@ test("isolated Mihwar API filters habit records and overlapping events without e
     const request = authenticatedRequest(base, bearerToken);
     const stamp = `daily-sources-${randomUUID()}`;
     const { journey, created: createdJourney } = await activeJourney(request, stamp);
+    const dateOffset = days => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+    const firstDate = dateOffset(-5);
+    const secondDate = dateOffset(-4);
+    const concurrentDate = dateOffset(-3);
     let habit;
     const events = [];
     try {
       const createdHabits = await request("habits", "POST", {
-        body: { journey_id: journey.id, name: stamp, start_date: "2026-03-01" }
+        body: { journey_id: journey.id, name: stamp, start_date: dateOffset(-10) }
       });
       assert.equal(createdHabits.length, 1);
       habit = createdHabits[0];
       const records = [];
-      for (const localDate of ["2026-03-10", "2026-03-11"]) {
+      for (const localDate of [firstDate, secondDate]) {
         const created = await request("habit-records", "POST", {
           body: { habit_id: habit.id, local_date: localDate, status: "completed", amount: 1 }
         });
@@ -236,13 +240,25 @@ test("isolated Mihwar API filters habit records and overlapping events without e
         records.push(created[0]);
       }
       const duplicate = await rawRequest(base, bearerToken, "habit-records", "POST", {
-        body: { habit_id: habit.id, local_date: "2026-03-10", status: "completed" }
+        body: { habit_id: habit.id, local_date: firstDate, status: "completed" }
       });
       assert.equal(duplicate.response.status, 409);
       assert.equal(duplicate.payload?.error?.code, "version_conflict");
+      const competing = await Promise.all([0, 1].map(() => rawRequest(base, bearerToken, "habit-records", "POST", {
+        body: { habit_id: habit.id, local_date: concurrentDate, status: "completed" }
+      })));
+      assert.deepEqual(competing.map(result => result.response.status).sort(), [201, 409]);
+      const concurrentRecords = await request("habit-records", "GET", { query: {
+        journey_id: journey.id, local_date_from: concurrentDate, local_date_to: concurrentDate
+      } });
+      assert.equal(concurrentRecords.filter(row => row.habit_id === habit.id).length, 1);
+      const futureRecord = await rawRequest(base, bearerToken, "habit-records", "POST", {
+        body: { habit_id: habit.id, local_date: dateOffset(3), status: "completed" }
+      });
+      assert.equal(futureRecord.response.status, 400);
 
       const recordWindow = {
-        journey_id: journey.id, local_date_from: "2026-03-10", local_date_to: "2026-03-10"
+        journey_id: journey.id, local_date_from: firstDate, local_date_to: firstDate
       };
       const included = await request("habit-records", "GET", { query: { id: records[0].id, ...recordWindow } });
       const excluded = await request("habit-records", "GET", { query: { id: records[1].id, ...recordWindow } });
@@ -253,16 +269,16 @@ test("isolated Mihwar API filters habit records and overlapping events without e
       } });
       assert.deepEqual(wrongJourney, []);
       const revisions = await request("habit-revisions", "POST", { body: {
-        habit_id: habit.id, effective_date: "2026-03-11", frequency: "daily",
+        habit_id: habit.id, effective_date: secondDate, frequency: "daily",
         days: [0, 1, 2, 3, 4, 5, 6], target: 1, unit: "times"
       } });
       assert.equal(revisions.length, 1);
       const futureRevision = await request("habit-revisions", "GET", { query: {
-        id: revisions[0].id, journey_id: journey.id, effective_date_to: "2026-03-10"
+        id: revisions[0].id, journey_id: journey.id, effective_date_to: firstDate
       } });
       assert.deepEqual(futureRevision, []);
       const effectiveRevision = await request("habit-revisions", "GET", { query: {
-        id: revisions[0].id, journey_id: journey.id, effective_date_to: "2026-03-11"
+        id: revisions[0].id, journey_id: journey.id, effective_date_to: secondDate
       } });
       assert.equal(effectiveRevision[0]?.id, revisions[0].id);
       const updated = await request("habit-records", "PATCH", {
@@ -276,8 +292,16 @@ test("isolated Mihwar API filters habit records and overlapping events without e
         body: { status: "skipped" }
       });
       assert.equal(stale.response.status, 409);
+      const competingUpdates = await Promise.all(["completed", "skipped"].map(status =>
+        rawRequest(base, bearerToken, "habit-records", "PATCH", {
+          query: { id: records[0].id, expected_version: updated[0].version },
+          body: { status }
+        })));
+      assert.deepEqual(competingUpdates.map(result => result.response.status).sort(), [200, 409]);
+      const currentRecord = await request("habit-records", "GET", { query: { id: records[0].id } });
+      assert.equal(currentRecord[0].version, updated[0].version + 1);
       const crossUpdate = await rawRequest(base, secondBearerToken, "habit-records", "PATCH", {
-        query: { id: records[0].id, expected_version: updated[0].version },
+        query: { id: records[0].id, expected_version: currentRecord[0].version },
         body: { status: "skipped" }
       });
       assert.ok([403, 404, 409].includes(crossUpdate.response.status));

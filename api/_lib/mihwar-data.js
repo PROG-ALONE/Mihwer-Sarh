@@ -159,6 +159,8 @@ async function createHandler({
       const baseQuery = { owner_id: `eq.${profile.id}` };
       let dbMethod;
       let dbBody;
+      let dbTable = config.table;
+      let dbQuery = baseQuery;
 
       if (method === "GET") {
         for (const key of ["journey_id", "local_date_from", "local_date_to", "effective_date_to", "overlap_from", "overlap_to"]) {
@@ -228,7 +230,21 @@ async function createHandler({
         if (config.mode === "read-only") throw new IdentityError("forbidden", 403);
         dbBody = parseBody(request.body);
         assertSafePayload(dbBody);
-        dbBody = { ...dbBody, owner_id: profile.id };
+        if (resource === "habit-records") {
+          if (Object.keys(dbBody).some(key => !["habit_id", "local_date", "status", "amount"].includes(key))) {
+            throw new IdentityError("validation_failed", 400);
+          }
+          dbTable = "rpc/create_habit_record";
+          dbQuery = {};
+          dbBody = {
+            p_habit_id: dbBody.habit_id ?? null,
+            p_local_date: dbBody.local_date ?? null,
+            p_status: dbBody.status ?? null,
+            p_amount: dbBody.amount ?? null
+          };
+        } else {
+          dbBody = { ...dbBody, owner_id: profile.id };
+        }
         dbMethod = "POST";
       } else if (method === "PATCH") {
         requirePermission(identity, "data:write");
@@ -249,9 +265,23 @@ async function createHandler({
         if (config.updateFields && Object.keys(dbBody).some(key => !config.updateFields.includes(key))) {
           throw new IdentityError("validation_failed", 400);
         }
-        if (!config.ownerKeyed) baseQuery.id = `eq.${id}`;
-        baseQuery.version = `eq.${expectedVersion}`;
-        dbMethod = "PATCH";
+        if (resource === "habit-records") {
+          dbTable = "rpc/update_habit_record";
+          dbQuery = {};
+          dbBody = {
+            p_record_id: id,
+            p_expected_version: expectedVersion,
+            p_set_status: Object.hasOwn(dbBody, "status"),
+            p_status: dbBody.status ?? null,
+            p_set_amount: Object.hasOwn(dbBody, "amount"),
+            p_amount: dbBody.amount ?? null
+          };
+          dbMethod = "POST";
+        } else {
+          if (!config.ownerKeyed) baseQuery.id = `eq.${id}`;
+          baseQuery.version = `eq.${expectedVersion}`;
+          dbMethod = "PATCH";
+        }
       } else {
         return response(405, { error: { code: "method_not_allowed" } });
       }
@@ -260,14 +290,15 @@ async function createHandler({
         baseUrl: env.MIHWAR_SUPABASE_URL,
         publicKey: env.MIHWAR_SUPABASE_ANON_KEY,
         identity,
-        table: config.table,
-        query: baseQuery,
+        table: dbTable,
+        query: dbQuery,
         method: dbMethod,
         body: dbBody,
         fetchImpl
       });
       if (!result.response.ok) {
-        if (method === "POST" && resource === "habit-records" && result.data?.code === "23505") {
+        if (resource === "habit-records" &&
+            (method === "POST" && result.data?.code === "23505" || method === "PATCH" && result.data?.code === "40001")) {
           return response(409, { error: { code: "version_conflict" } });
         }
         const status = result.response.status === 401 ? 401 : result.response.status === 403 ? 403 : 400;

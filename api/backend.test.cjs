@@ -217,7 +217,7 @@ test("daily habit and calendar windows are validated and remain owner-scoped", a
   }
 });
 
-test("habit progress updates only allowed fields with owner and version constraints", async () => {
+test("habit progress updates use a verified database RPC and preserve version constraints", async () => {
   const id = "00000000-0000-4000-8000-000000000063";
   let url;
   let sent;
@@ -235,10 +235,16 @@ test("habit progress updates only allowed fields with owner and version constrai
   });
   const query = { id, expected_version: "1" };
   assert.equal((await handler(request("PATCH", "habit-records", { query, body: { status: "completed" } }))).status, 200);
-  assert.equal(url.searchParams.get("owner_id"), `eq.${userA}`);
-  assert.equal(url.searchParams.get("id"), `eq.${id}`);
-  assert.equal(url.searchParams.get("version"), "eq.1");
-  assert.deepEqual(sent, { status: "completed" });
+  assert.equal(url.pathname, "/rest/v1/rpc/update_habit_record");
+  assert.equal(url.search, "");
+  assert.deepEqual(sent, {
+    p_record_id: id, p_expected_version: 1, p_set_status: true, p_status: "completed",
+    p_set_amount: false, p_amount: null
+  });
+  assert.equal((await handler(request("PATCH", "habit-records", { query, body: { amount: null } }))).status, 200);
+  assert.equal(sent.p_set_status, false);
+  assert.equal(sent.p_set_amount, true);
+  assert.equal(sent.p_amount, null);
   for (const body of [
     { habit_id: "00000000-0000-4000-8000-000000000030" },
     { local_date: "2026-11-20" },
@@ -246,6 +252,36 @@ test("habit progress updates only allowed fields with owner and version constrai
   ]) {
     assert.equal((await handler(request("PATCH", "habit-records", { query, body }))).status, 400);
   }
+  assert.equal(calls, 2);
+});
+
+test("habit record creation uses the verified database identity and a fixed validation RPC", async () => {
+  let url;
+  let sent;
+  let calls = 0;
+  const handler = await createHandler({
+    provider: createTestIdentityProvider(),
+    profileResolver: async () => ({ id: userA, status: "active" }),
+    env: { MIHWAR_SUPABASE_URL: "https://mihwar.test.invalid", MIHWAR_SUPABASE_ANON_KEY: "public-test-key" },
+    fetchImpl: async (target, options) => {
+      calls += 1;
+      url = new URL(target);
+      sent = JSON.parse(options.body);
+      assert.equal(options.headers.authorization, "Bearer test-database-token-a");
+      return jsonResponse([{ id: "00000000-0000-4000-8000-000000000063" }]);
+    }
+  });
+  const body = {
+    habit_id: "00000000-0000-4000-8000-000000000030",
+    local_date: "2026-11-21", status: "partial", amount: 0.5
+  };
+  assert.equal((await handler(request("POST", "habit-records", { body }))).status, 201);
+  assert.equal(url.pathname, "/rest/v1/rpc/create_habit_record");
+  assert.equal(url.search, "");
+  assert.deepEqual(sent, {
+    p_habit_id: body.habit_id, p_local_date: body.local_date, p_status: body.status, p_amount: body.amount
+  });
+  assert.equal((await handler(request("POST", "habit-records", { body: { ...body, recorded_at: "2026-11-21T00:00:00Z" } }))).status, 400);
   assert.equal(calls, 1);
 });
 
@@ -261,6 +297,21 @@ test("duplicate daily habit records return a conflict instead of a second succes
     local_date: "2026-11-21",
     status: "completed"
   } }));
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error.code, "version_conflict");
+});
+
+test("database habit version conflicts retain the API conflict contract", async () => {
+  const handler = await createHandler({
+    provider: createTestIdentityProvider(),
+    profileResolver: async () => ({ id: userA, status: "active" }),
+    env: { MIHWAR_SUPABASE_URL: "https://mihwar.test.invalid", MIHWAR_SUPABASE_ANON_KEY: "public-test-key" },
+    fetchImpl: async () => jsonResponse({ code: "40001" }, 409)
+  });
+  const result = await handler(request("PATCH", "habit-records", {
+    query: { id: "00000000-0000-4000-8000-000000000063", expected_version: "1" },
+    body: { status: "completed" }
+  }));
   assert.equal(result.status, 409);
   assert.equal(result.body.error.code, "version_conflict");
 });

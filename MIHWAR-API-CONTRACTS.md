@@ -44,7 +44,7 @@
 | مواقع | `/rest/v1/locations` | تغيير الافتراضي ذرياً مع إزالة السابق | الجرم والصلاة يعاد حسابهما محلياً |
 | المحطات والمسارات | `/rest/v1/stations`, `/rest/v1/paths` | نقل ملكية/ربط لا يسمح به من المتصفح | محطات مصدرها جدولها |
 | المهام | `/rest/v1/tasks`, `/rest/v1/task_occurrences`, `/rest/v1/task_subtasks` | `POST /rpc/transition_task_occurrence`, `POST /rpc/transition_subtask` | استعلام وقوعات الفترة؛ لا كتابة `timeline_items` |
-| العادات | `/rest/v1/habits`, `/rest/v1/habit_revisions`, `/rest/v1/habit_records` | `POST /rpc/record_habit_day` و`revise_habit` بمعاملة واحدة | مشتق من الجدول الفعال وسجل اليوم |
+| العادات | قراءة `habits`, `habit_revisions`, `habit_records`؛ كتابة السجلات عبر API مِحوَر | `create_habit_record` و`update_habit_record` منفذتان محلياً؛ `revise_habit` المقترحة غير منفذة | مشتق من الجدول الفعال وسجل اليوم |
 | الصلاة | `/rest/v1/prayer_records` عند تفعيل الحفظ الاختياري | `POST /rpc/record_prayer` يثبت الصلوات الخمس فقط | مواقيت محسوبة محلياً؛ لا تحفظ في API |
 | الأهداف والمشاريع | `/rest/v1/goals`, `/rest/v1/projects`, `/rest/v1/project_milestones`, جداول الروابط | عمليات ربط/حذف في معاملة | عناصر مشتقة مع معرف المصدر |
 | التقويم | `/rest/v1/calendar_events` | توسيع recurrence أو تعديل سلسلة بتحديد سياسة واضح | من أحداث التقويم نفسها |
@@ -126,7 +126,15 @@
 
 ### تسجيل عادة
 
-`POST /rpc/record_habit_day` يقبل `habit_id`, `local_date`, `status`, `amount`, `expected_version`, `idempotency_key`. الخادم يتحقق من الجدول الفعال لذلك التاريخ، الجدولة، أن التاريخ ليس مستقبلياً بالنسبة للمنطقة الموثوقة، وحد الهدف. تكرار التسجيل لنفس اليوم يعيد النتيجة أو `version_conflict`; لا ينشئ سجلين.
+المنفذ والمختبر على PostgreSQL محلي فقط:
+
+- `POST /api/v1/habit-records` يقبل `habit_id`, `local_date`, `status` و`amount` الاختياري، ويستدعي `create_habit_record`. لا يقبل المالك من العميل.
+- `PATCH /api/v1/habit-records?id=...&expected_version=...` يقبل `status` و/أو `amount` فقط، ويستدعي `update_habit_record`. حفظ `amount: null` يمحو القيمة؛ إغفالها يحافظ عليها.
+- تتحقق الدالتان خادمياً من هوية المالك ووصوله، ونشاط العادة والرحلة، وتاريخ العادة، والجدول والمراجعة الفعالين، وأن التاريخ ليس مستقبلياً في منطقة الرحلة. التعديل لا ينقل السجل إلى عادة أو تاريخ آخر. النسخة القديمة والتسجيل المكرر يعيدان `409 version_conflict`؛ لا ينشأ سجلان.
+- يسحب الترحيل صلاحية `INSERT/UPDATE/DELETE` المباشرة على `habit_records` من `authenticated`، مع إبقاء القراءة عبر RLS والكتابة عبر الدالتين. يسجل المحفّز التغيير دون حفظ محتوى العادة في سجل التدقيق.
+- لا يوجد بعد مفتاح `idempotency_key` يعيد النتيجة السابقة، ولا تحقق من علاقة الكمية بهدف العادة؛ ربط تعديل تعريف العادة ومراجعاتها من الواجهة غير مكتمل. تحديث سجل لعادة مؤرشفة أو غير مجدولة في تاريخ السجل مرفوض حالياً.
+
+تظل `record_habit_day` و`revise_habit` المذكورتان في التصميم الأصلي عقدين مقترحين، وليستا وظيفتين منفذتين بالاسم. لم يُطبق الترحيل على Supabase المستضاف.
 
 ### تسجيل الصلاة الاختياري
 
