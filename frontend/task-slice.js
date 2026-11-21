@@ -803,7 +803,7 @@
     });
     document.addEventListener("click", event => {
       const target = event.target.closest("[data-backend-retry],[data-access-start],[data-task-add],[data-task-cancel],[data-task-edit],[data-task-toggle],[data-task-archive],[data-backend-period],[data-backend-date-shift],[data-daily-skip],[data-daily-restore],[data-daily-habit],[data-daily-event-edit],[data-timeline-event-edit],[data-daily-event-cancel]");
-      if (!target) return;
+      if (!target || !target.closest("[data-backend-task-slice]")) return;
       if (state.busy) return;
       if (target.matches("[data-access-start]")) {
         state.busy = true;

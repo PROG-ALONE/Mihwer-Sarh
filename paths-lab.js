@@ -341,7 +341,7 @@ document.addEventListener("click",event=>{
   event.preventDefault();event.stopImmediatePropagation();suppressActivityClick=false;
 },true);
 document.addEventListener("click",event=>{
-  const archiveButton=event.target.closest("[data-task-archive]");
+  const archiveButton=event.target.closest("[data-task-archive][data-task-id]");
   if(archiveButton){archiveStationTask(archiveButton.dataset.taskArchive,archiveButton.dataset.taskId);return;}
   const restoreButton=event.target.closest("[data-task-restore]");
   if(restoreButton){

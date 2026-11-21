@@ -1459,7 +1459,7 @@ document.addEventListener("click",event=>{
   const open=event.target.closest("[data-living-open]");if(open){focusStation(open.dataset.livingOpen,true,open.closest(".route-row")?.dataset.entry);return;}
   const back=event.target.closest("[data-station-back]");if(back){showStation(back.dataset.stationBack);return;}
   const taskEditorCancel=event.target.closest("[data-task-editor-cancel]");if(taskEditorCancel){showStation(taskEditorCancel.dataset.taskEditorCancel,null,taskEditorCancel.dataset.taskId);return;}
-  const taskEdit=event.target.closest("[data-task-edit]");if(taskEdit){showTaskEditor(taskEdit.dataset.stationId,taskEdit.dataset.taskEdit);return;}
+  const taskEdit=event.target.closest("[data-task-edit][data-station-id]");if(taskEdit){showTaskEditor(taskEdit.dataset.stationId,taskEdit.dataset.taskEdit);return;}
   const completionDetails=event.target.closest("[data-task-completion-details]");
   if(completionDetails){showStation(completionDetails.dataset.stationId,completionDetails.dataset.taskCompletionDetails);return;}
   const taskButton=event.target.closest("[data-task]");if(taskButton){

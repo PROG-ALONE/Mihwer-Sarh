@@ -57,7 +57,12 @@ const words = {
   chooseDates:["التاريخ والفترة في هذا النموذج للعرض فقط.","Date and period in this prototype are illustrative."], previewSettings:["إعدادات المعاينة","Preview settings"]
 };
 let language = "ar";
-let screen = "day";
+const appScreens = new Set(["day","week","month","year","activities","paths","organizer","document","sharing","preview"]);
+function screenFromHash(hash) {
+  const requested=hash.replace(/^#/,"");
+  return appScreens.has(requested)?requested:"day";
+}
+let screen = screenFromHash(window.location.hash);
 const screenScrollPositions = new Map();
 let direction = "flow";
 let privacy = "private";
@@ -217,21 +222,25 @@ function pathsView() {
   return header("pathsTitle","pathsSub")+`<div class="grid">${data.map(([name,desc,icon])=>`<button class="tile" data-path="${name}"><span class="big">${icon}</span><h3>${t(name)}</h3><small>${t(desc)}</small></button>`).join("")}</div><div class="divider"></div><section class="panel"><h3>${t("storyNote")}</h3><p class="muted">${t("pathDetail")}</p>${button("journey","day")}</section>`;
 }
 function render() {
+  const taskSlice=window.MihwarTaskSlice;
+  const serverScreen=Boolean(taskSlice&&screen==="activities");
   document.documentElement.lang=language; document.documentElement.dir=language==="ar"?"rtl":"ltr";
-  document.body.classList.toggle("journey-day",screen==="day");
+  document.body.classList.toggle("journey-day",screen==="day"&&!serverScreen);
   document.body.classList.toggle("journey-period",["week","month","year"].includes(screen));
   document.body.classList.add("journey-worldwide");
   document.querySelectorAll("[data-text]").forEach(el=>el.textContent=t(el.dataset.text));
   document.querySelectorAll("[data-text-aria]").forEach(el=>el.setAttribute("aria-label",t(el.dataset.textAria)));
   document.querySelectorAll(".main-nav [data-screen],.mobile-nav [data-screen]").forEach(el=>el.classList.toggle("active",el.dataset.screen===(["day","week","month","year","document"].includes(screen)?"day":screen==="preview"?"sharing":screen)));
-  const taskSlice=window.MihwarTaskSlice;
-  if(taskSlice){
-    view.innerHTML=`${taskSlice.render()}<section class="progress-settings-entry"><button type="button" class="secondary" data-utility="settings">${language==="ar"?"الإعدادات والإحصائيات":"Settings & progress"}</button></section>`;
-    document.querySelector(".topbar")?.setAttribute("inert","");
-    document.querySelector(".mobile-nav")?.setAttribute("inert","");
-    document.querySelectorAll(".topbar button,.mobile-nav button").forEach(control=>{control.disabled=true;});
+  document.querySelector(".topbar")?.removeAttribute("inert");
+  document.querySelector(".mobile-nav")?.removeAttribute("inert");
+  document.querySelectorAll(".main-nav button,.mobile-nav button").forEach(control=>{control.disabled=false;});
+  document.querySelectorAll(".top-actions button").forEach(control=>{control.disabled=serverScreen;});
+  document.querySelectorAll(".notice,#scenic-disclosure").forEach(el=>{el.style.display=serverScreen?"none":"";});
+  if(serverScreen){
+    view.innerHTML=`<div data-backend-task-slice>${taskSlice.render()}</div><section class="progress-settings-entry"><button type="button" class="secondary" data-utility="settings">${language==="ar"?"الإعدادات والإحصائيات":"Settings & progress"}</button></section>`;
   }else{
-    view.innerHTML = ["day","week","month","year"].includes(screen)?journey():screen==="document"?documentView():screen==="sharing"?sharingView():screen==="preview"?previewView():screen==="activities"&&typeof activitiesView==="function"?activitiesView():screen==="organizer"&&typeof organizerView==="function"?organizerView():pathsView();
+    const preview=taskSlice?`<p class="disabled-note" data-journey-preview role="status">${language==="ar"?"معاينة محلية للواجهة الأصلية؛ عناصرها ليست بيانات محفوظة في الخادم.":"Local preview of the original interface; its items are not server-saved data."} <button class="secondary" data-screen="activities">${language==="ar"?"المهام والعادات المحفوظة":"Saved tasks and habits"}</button></p>`:"";
+    view.innerHTML = preview+(["day","week","month","year"].includes(screen)?journey():screen==="document"?documentView():screen==="sharing"?sharingView():screen==="preview"?previewView():screen==="activities"&&typeof activitiesView==="function"?activitiesView():screen==="organizer"&&typeof organizerView==="function"?organizerView():pathsView());
     if (typeof livingMount === "function") livingMount();
     const route=scrollRouteForCurrentScreen();
     if(route&&!route.root.matches(".journey-viewport")&&!route.items.some(item=>item.classList.contains("is-focused"))){
@@ -380,11 +389,12 @@ document.addEventListener("keydown",event=>{
   event.preventDefault();
   stepScrollRoute(route,event.key==="ArrowUp"||event.key==="PageUp"?-1:1);
 });
-function go(next) {
+function go(next,updateHistory=true) {
   if(screen!=="day")screenScrollPositions.set(screen,window.scrollY);
   routeWheelGate.reset();
   routeNativeScrollIntentUntil=0;routeNativeTouchStartY=null;
-  screen=next;
+  screen=appScreens.has(next)?next:"day";
+  if(updateHistory&&window.location.hash!==`#${screen}`)window.history.pushState(null,"",`#${screen}`);
   document.body.classList.remove("screen-arrive");
   render();
   if(!matchMedia("(prefers-reduced-motion: reduce)").matches){
@@ -394,6 +404,14 @@ function go(next) {
   }
   window.scrollTo(0,next==="day"?0:screenScrollPositions.get(next)||0);
 }
+function restoreHashScreen() {
+  const next=screenFromHash(window.location.hash);
+  if(next===screen)return;
+  if(dialog.open)dialog.close();
+  go(next,false);
+}
+window.addEventListener("hashchange",restoreHashScreen);
+window.addEventListener("popstate",restoreHashScreen);
 function openDialog(title, html) { dialogTitle.textContent=t(title); dialogContent.innerHTML=html; if(!dialog.open)dialog.showModal(); }
 document.addEventListener("click", event => {
   const target=event.target.closest("[data-screen],[data-action],[data-direction],[data-path],[data-complete],[data-period-date]");
@@ -453,4 +471,4 @@ document.querySelector("#open-voice").addEventListener("click",()=>openDialog("v
 document.querySelector("#open-add").addEventListener("click",()=>quickTaskCreate());
 document.querySelector("#dialog-close").addEventListener("click",()=>dialog.close());
 dialog.addEventListener("keydown",event=>{if(event.key==="Escape"){event.preventDefault();dialog.close();}});
-render();
+document.addEventListener("DOMContentLoaded",render,{once:true});
