@@ -199,10 +199,10 @@
 
       onProgress("verifying");
       const readFinalizedAttachment = async () => {
-        const rows = await request("attachments", { query: { id: prepared.id, limit: 1 } });
-        return Array.isArray(rows)
-          ? rows.find(row => row?.id === prepared.id && row.state === "ready") || null
-          : null;
+        const row = await request("attachments", {
+          query: { action: "metadata", id: prepared.id }
+        });
+        return row?.id === prepared.id && row.state === "ready" ? row : null;
       };
       try {
         return await request("attachments", {

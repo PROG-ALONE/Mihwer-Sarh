@@ -176,10 +176,10 @@ test("attachment upload recovers a ready record if the finalize response is lost
         return jsonResponse({ data: { aborted: true } });
       }
       if (url.pathname === "/api/v1/attachments") {
-        return jsonResponse({ data: [{
+        return jsonResponse({ data: {
           id: "00000000-0000-4000-8000-000000000012",
           state: "ready"
-        }] });
+        } });
       }
       throw new Error(`unexpected request ${options.method} ${url.pathname}`);
     }

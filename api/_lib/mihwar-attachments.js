@@ -345,6 +345,41 @@ function createAttachmentHandler({
     return response(200, { data: { id: record.id, download_url: signedUrl.toString(), expires_in: 60 } });
   }
 
+  async function list(identity, profile, limitValue) {
+    const limit = limitValue === undefined ? 100 : Number(limitValue);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new IdentityError("invalid_limit", 400);
+    }
+    const rows = await databaseRequest(identity, "GET", "attachments", {
+      owner_id: `eq.${profile.id}`,
+      state: "eq.ready",
+      deleted_at: "is.null",
+      select: "id,owner_id,content_type,byte_size,state,deleted_at,created_at",
+      order: "created_at.desc,id.desc",
+      limit: String(limit)
+    });
+    return response(200, {
+      data: Array.isArray(rows)
+        ? rows.filter(row => row.owner_id === profile.id && row.state === "ready" && !row.deleted_at)
+        : []
+    });
+  }
+
+  async function metadata(identity, profile, id) {
+    if (!UUID.test(id || "")) throw new IdentityError("validation_failed", 400);
+    const record = await ownedAttachment(identity, profile.id, id);
+    if (record.state !== "ready" || record.deleted_at) throw new IdentityError("not_found", 404);
+    return response(200, {
+      data: {
+        id: record.id,
+        content_type: record.content_type,
+        byte_size: record.byte_size,
+        state: record.state,
+        deleted_at: record.deleted_at || null
+      }
+    });
+  }
+
   async function remove(identity, profile, id) {
     if (!UUID.test(id || "")) throw new IdentityError("validation_failed", 400);
     const record = await ownedAttachment(identity, profile.id, id);
@@ -375,7 +410,11 @@ function createAttachmentHandler({
       const permission = method === "GET" ? "data:read" : "data:write";
       requirePermission(identity, permission);
       const profile = await profileResolver(identity, env, fetchImpl);
-      if (method === "GET") return await download(identity, profile, queryValue(request, "id"));
+      if (method === "GET") {
+        const id = queryValue(request, "id");
+        if (action === "metadata") return await metadata(identity, profile, id);
+        return id ? await download(identity, profile, id) : await list(identity, profile, queryValue(request, "limit"));
+      }
       if (method === "DELETE") return await remove(identity, profile, queryValue(request, "id"));
       if (method === "POST") {
         const body = parseBody(request.body);

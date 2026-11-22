@@ -185,7 +185,7 @@
       fields: [field("title", "text", { required: true, max: 160 }),
         field("status", "select", { options: opt(["active", "archived"], ["نشطة", "مؤرشفة"], ["Active", "Archived"]) })], summary: r => r.status },
     { key: "shopping-items", group: "finance", resource: "shopping-items", editable: true, archivable: true, archiveColumn: "archived_at", completeField: "checked_at",
-      zone: true, ar: "عناصر قوائم المشتريات", en: "Shopping list items",
+      ar: "عناصر قوائم المشتريات", en: "Shopping list items",
       dependencies: ["shopping-lists"],
       fields: [
         field("list_id", "relation", { required: true, optionsFrom: "shopping-lists", label: { ar: "القائمة", en: "List" } }),

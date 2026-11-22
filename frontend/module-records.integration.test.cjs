@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 const { createApiClient } = require("./api-client");
 const { MODULES, createModuleRecordsController, recordToDraft } = require("./module-records");
+const { periodRange } = require("./task-slice");
 
 const apiBase = process.env.MIHWAR_INTEGRATION_API_URL;
 const tokenA = process.env.MIHWAR_INTEGRATION_BEARER_TOKEN;
@@ -158,4 +159,155 @@ test("every editable Mihwar module persists through the real API, survives reloa
   }
   const crossJourney = await apiB.request("meal-logs", { query: { journey_id: journey.id, limit: 100 } }).catch(error => error);
   assert.ok(Array.isArray(crossJourney) ? crossJourney.length === 0 : crossJourney.status >= 400);
+});
+
+test("shopping items preserve list relationships, completion, archive and owner isolation", { skip: !configured }, async () => {
+  const apiA = client(tokenA);
+  const apiB = client(tokenB);
+  const stamp = `shopping-${randomUUID()}`;
+  const list = (await apiA.request("shopping-lists", {
+    method: "POST",
+    body: { title: stamp, status: "active" }
+  }))[0];
+  assert.ok(list?.id, "shopping list was not created");
+
+  const journey = await journeyFor(apiA, stamp);
+  const ctx = { journeyId: journey.id, timeZone: "Asia/Riyadh", today: "2031-06-15", language: "en" };
+  const controller = createModuleRecordsController({ getClient: () => apiA });
+  controller.render(ctx);
+  await controller.loadList("shopping-lists", { force: true });
+  await saveThrough(controller, "shopping-items", null, { list_id: list.id, name: `${stamp} apples`, quantity: "3" });
+  await saveThrough(controller, "shopping-items", null, { list_id: list.id, name: `${stamp} bread`, quantity: "1 loaf" });
+  const createdItems = await reloadedRows(tokenA, ctx, "shopping-items");
+  const first = createdItems.find(item => item.name === `${stamp} apples`);
+  const second = createdItems.find(item => item.name === `${stamp} bread`);
+  assert.ok(first?.id && second?.id && first.id !== second.id);
+  assert.equal(first.list_id, list.id);
+
+  let items = await apiA.request("shopping-items", { query: { list_id: list.id, limit: 100 } });
+  assert.equal(items.filter(item => item.name.startsWith(stamp)).length, 2);
+
+  const updated = (await apiA.request("shopping-items", {
+    method: "PATCH",
+    query: { id: first.id },
+    expectedVersion: first.version,
+    body: { quantity: "4" }
+  }))[0];
+  assert.equal(updated.quantity, "4");
+  assert.ok(updated.version > first.version);
+
+  const completed = (await apiA.request("shopping-items", {
+    method: "PATCH",
+    query: { id: first.id },
+    expectedVersion: updated.version,
+    body: { checked_at: new Date().toISOString() }
+  }))[0];
+  assert.ok(completed.checked_at);
+
+  const archived = (await apiA.request("shopping-items", {
+    method: "PATCH",
+    query: { id: second.id },
+    expectedVersion: second.version,
+    body: { archived_at: new Date().toISOString() }
+  }))[0];
+  assert.ok(archived.archived_at);
+  const reloaded = await apiA.request("shopping-items", { query: { list_id: list.id, limit: 100 } });
+  assert.equal(reloaded.find(item => item.id === first.id)?.quantity, "4");
+  assert.ok(reloaded.find(item => item.id === first.id)?.checked_at);
+  assert.equal(reloaded.find(item => item.id === second.id), undefined, "archived items must stay out of active list reads");
+  assert.equal(reloaded.filter(item => item.name.startsWith(stamp)).length, 1);
+
+  const foreignRead = await apiB.request("shopping-items", { query: { list_id: list.id, limit: 100 } });
+  assert.equal(foreignRead.length, 0, "another user must not read this list's items");
+  const foreignUpdate = await apiB.request("shopping-items", {
+    method: "PATCH",
+    query: { id: first.id },
+    expectedVersion: completed.version,
+    body: { quantity: "forged" }
+  }).then(() => null, error => error);
+  assert.ok(foreignUpdate && foreignUpdate.status >= 400, "another user must not edit the item");
+  const foreignDelete = await apiB.request("shopping-items", {
+    method: "DELETE",
+    query: { id: first.id }
+  }).then(() => null, error => error);
+  assert.ok(foreignDelete && foreignDelete.status >= 400, "another user must not delete the item");
+
+  const ownerForgery = await apiA.request("shopping-items", {
+    method: "POST",
+    body: { owner_id: "00000000-0000-4000-8000-000000000002", list_id: list.id, name: `${stamp} forged` }
+  }).then(() => null, error => error);
+  assert.ok(ownerForgery && ownerForgery.status === 400, "client-supplied owner ids must be rejected");
+});
+
+test("Journey day, week, month and year rebuild chronologically from source records", { skip: !configured }, async () => {
+  const api = client(tokenA);
+  const stamp = `journey-period-${randomUUID()}`;
+  const journey = await journeyFor(api, stamp);
+  const dates = [
+    ["2031-06-15T08:00:00Z", "day early"],
+    ["2031-06-15T16:00:00Z", "day late"],
+    ["2031-06-12T12:00:00Z", "week boundary"],
+    ["2031-06-02T12:00:00Z", "month early"],
+    ["2031-06-29T12:00:00Z", "month late"],
+    ["2031-02-02T12:00:00Z", "year early"],
+    ["2031-12-02T12:00:00Z", "year late"]
+  ];
+  const created = [];
+  for (const [occurred_at, label] of dates) {
+    created.push((await api.request("meal-logs", {
+      method: "POST",
+      body: {
+        journey_id: journey.id,
+        occurred_at,
+        time_zone: "Asia/Riyadh",
+        meal_type: "snack",
+        description: `${stamp} ${label}`
+      }
+    }))[0]);
+  }
+
+  const context = { journeyId: journey.id, timeZone: "Asia/Riyadh", today: "2031-06-15", language: "en" };
+  const controller = createModuleRecordsController({ getClient: () => api });
+  const expected = {
+    day: created.slice(0, 2).map(row => row.id),
+    week: created.slice(0, 3).map(row => row.id),
+    month: created.slice(0, 5).map(row => row.id),
+    year: created.map(row => row.id)
+  };
+  for (const period of ["day", "week", "month", "year"]) {
+    const range = periodRange(context.today, period);
+    const journeyKey = `${journey.id}:${range.start}:${range.end}`;
+    controller.renderJourney(context, range);
+    for (let attempt = 0; attempt < 200 &&
+        (controller.state.journey.key !== journeyKey || controller.state.journey.status !== "ready"); attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(controller.state.journey.status, "ready", `${period} Journey failed to load`);
+    const items = controller.state.journey.items.filter(item => item.record.description?.startsWith(stamp));
+    const ids = items.map(item => item.record.id);
+    assert.deepEqual(new Set(ids), new Set(expected[period]), `${period} period contained wrong source records`);
+    assert.equal(ids.length, expected[period].length, `${period} period duplicated source records`);
+    assert.deepEqual(items.map(item => item.record.occurred_at), [...items]
+      .map(item => item.record.occurred_at).sort(), `${period} items were not chronological`);
+  }
+
+  const target = created[0];
+  const current = (await api.request("meal-logs", { query: { id: target.id, limit: 1 } }))[0];
+  const changed = (await api.request("meal-logs", {
+    method: "PATCH",
+    query: { id: target.id },
+    expectedVersion: current.version,
+    body: { description: `${stamp} edited at source` }
+  }))[0];
+  assert.equal(changed.description, `${stamp} edited at source`);
+  const recovered = await api.request("meal-logs", {
+    query: {
+      journey_id: journey.id,
+      range_from: "2031-06-15T00:00:00.000Z",
+      range_to: "2031-06-16T00:00:00.000Z",
+      limit: 100
+    }
+  });
+  assert.equal(recovered.filter(row => row.description?.startsWith(stamp)).length, 2);
+  assert.ok(recovered.some(row => row.id === target.id && row.description === `${stamp} edited at source`));
 });

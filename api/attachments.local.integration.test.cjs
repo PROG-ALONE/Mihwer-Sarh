@@ -180,6 +180,9 @@ test("isolated local Supabase attachment lifecycle with two Auth identities", {
     const listing = await callData(usersInScope[0], "GET", "attachments");
     assert.equal(listing.status, 200);
     assert.ok(listing.body.data.some(item => item.id === readyAttachmentId && item.owner_id === usersInScope[0].id));
+    const attachmentEndpointListing = await callAttachment(usersInScope[0], "GET");
+    assert.equal(attachmentEndpointListing.status, 200);
+    assert.ok(attachmentEndpointListing.body.data.some(item => item.id === readyAttachmentId));
     const reloadHandler = await createHandler({ provider, env });
     const reloaded = await reloadHandler({
       method: "GET",
@@ -199,6 +202,8 @@ test("isolated local Supabase attachment lifecycle with two Auth identities", {
 
     const crossUserMetadata = await callAttachment(usersInScope[1], "GET", { id: readyAttachmentId });
     assert.equal(crossUserMetadata.status, 404);
+    const crossUserAttachmentList = await callAttachment(usersInScope[1], "GET");
+    assert.deepEqual(crossUserAttachmentList.body.data, []);
     const crossUserList = await callData(usersInScope[1], "GET", "attachments");
     assert.deepEqual(crossUserList.body.data, []);
     const objectPath = `${usersInScope[0].id}/${readyAttachmentId}.txt`;

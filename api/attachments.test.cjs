@@ -39,8 +39,17 @@ function makeHarness({ bytes = Buffer.from("safe text file"), id = attachmentId,
         return jsonResponse([row], 201);
       }
       if (method === "GET") {
-        const row = rows.get(url.searchParams.get("id")?.slice(3));
-        return jsonResponse(row && row.owner_id === url.searchParams.get("owner_id")?.slice(3) ? [{ ...row }] : []);
+        const id = url.searchParams.get("id")?.slice(3);
+        const ownerId = url.searchParams.get("owner_id")?.slice(3);
+        if (id) {
+          const row = rows.get(id);
+          return jsonResponse(row && row.owner_id === ownerId ? [{ ...row }] : []);
+        }
+        return jsonResponse([...rows.values()].filter(row =>
+          row.owner_id === ownerId &&
+          row.state === url.searchParams.get("state")?.slice(3) &&
+          (url.searchParams.get("deleted_at") === "is.null" ? !row.deleted_at : true)
+        ).map(row => ({ ...row })));
       }
       if (method === "PATCH") {
         const row = rows.get(url.searchParams.get("id")?.slice(3));
@@ -91,10 +100,14 @@ function makeHarness({ bytes = Buffer.from("safe text file"), id = attachmentId,
     makeId: () => id,
     now: () => "2026-11-22T00:00:00.000Z"
   });
-  const request = (method, { action, body, id: queryId, token = "test-token-user-a" } = {}) => ({
+  const request = (method, { action, body, id: queryId, limit, token = "test-token-user-a" } = {}) => ({
     method,
     headers: token ? { authorization: `Bearer ${token}` } : {},
-    query: { ...(action ? { action } : {}), ...(queryId ? { id: queryId } : {}) },
+    query: {
+      ...(action ? { action } : {}),
+      ...(queryId ? { id: queryId } : {}),
+      ...(limit ? { limit } : {})
+    },
     body
   });
   return { handler, request, rows, links, storageCalls, setBytes: value => { uploadedBytes = value; } };
@@ -129,6 +142,26 @@ test("attachment lifecycle uploads only to generated owner paths and persists ve
   assert.equal(harness.rows.get(attachmentId).state, "ready");
   assert.equal(harness.storageCalls.filter(call => call.method === "DELETE").length, 0);
 
+  const listing = await harness.handler(harness.request("GET", { limit: "100" }));
+  assert.equal(listing.status, 200);
+  assert.deepEqual(listing.body.data.map(row => row.id), [attachmentId]);
+  const otherOwnerListing = await harness.handler(harness.request("GET", {
+    limit: "100",
+    token: "test-token-user-b"
+  }));
+  assert.deepEqual(otherOwnerListing.body.data, []);
+  const metadata = await harness.handler(harness.request("GET", {
+    action: "metadata",
+    id: attachmentId
+  }));
+  assert.deepEqual(metadata.body.data, {
+    id: attachmentId,
+    content_type: "text/plain",
+    byte_size: bytes.length,
+    state: "ready",
+    deleted_at: null
+  });
+
   const download = await harness.handler(harness.request("GET", { id: attachmentId }));
   assert.equal(download.status, 200);
   assert.equal(download.body.data.expires_in, 60);
@@ -140,6 +173,16 @@ test("attachment lifecycle uploads only to generated owner paths and persists ve
   assert.equal(harness.rows.get(attachmentId).state, "deleted");
   assert.equal(harness.rows.get(attachmentId).deleted_at, "2026-11-22T00:00:00.000Z");
   assert.equal(harness.storageCalls.filter(call => call.method === "DELETE").length, 1);
+  const hiddenAfterDelete = await harness.handler(harness.request("GET", { limit: "100" }));
+  assert.deepEqual(hiddenAfterDelete.body.data, []);
+});
+
+test("attachment metadata listing validates bounds", async () => {
+  const harness = makeHarness();
+  const invalid = await harness.handler(harness.request("GET", { limit: "101" }));
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.body.error.code, "invalid_limit");
+  assert.equal(harness.storageCalls.length, 0);
 });
 
 test("invalid metadata and oversized uploads are rejected before creating storage access", async () => {
