@@ -212,6 +212,21 @@ test("isolated local Supabase attachment lifecycle with two Auth identities", {
       { headers: { apikey: anonKey, authorization: `Bearer ${usersInScope[1].accessToken}` } }
     );
     assert.equal(crossUserObject.ok, false);
+    const crossUserDelete = await callAttachment(usersInScope[1], "DELETE", { id: readyAttachmentId });
+    assert.equal(crossUserDelete.status, 404);
+    const crossUserObjectDelete = await fetch(
+      `${baseUrl}/storage/v1/object/mihwer-private/${objectPath}`,
+      {
+        method: "DELETE",
+        headers: { apikey: anonKey, authorization: `Bearer ${usersInScope[1].accessToken}` }
+      }
+    );
+    assert.equal(crossUserObjectDelete.ok, false);
+    const ownerObjectAfterForeignDelete = await fetch(
+      `${baseUrl}/storage/v1/object/authenticated/mihwer-private/${objectPath}`,
+      { headers: { apikey: anonKey, authorization: `Bearer ${usersInScope[0].accessToken}` } }
+    );
+    assert.equal(ownerObjectAfterForeignDelete.ok, true);
 
     const invalidType = await callAttachment(usersInScope[0], "POST", {
       action: "prepare",

@@ -225,12 +225,17 @@ test("shopping items preserve list relationships, completion, archive and owner 
     expectedVersion: completed.version,
     body: { quantity: "forged" }
   }).then(() => null, error => error);
-  assert.ok(foreignUpdate && foreignUpdate.status >= 400, "another user must not edit the item");
-  const foreignDelete = await apiB.request("shopping-items", {
-    method: "DELETE",
-    query: { id: first.id }
+  assert.equal(foreignUpdate?.status, 409, "another user must not edit the item");
+  const foreignArchive = await apiB.request("shopping-items", {
+    method: "PATCH",
+    query: { id: first.id },
+    expectedVersion: completed.version,
+    body: { archived_at: new Date().toISOString() }
   }).then(() => null, error => error);
-  assert.ok(foreignDelete && foreignDelete.status >= 400, "another user must not delete the item");
+  assert.equal(foreignArchive?.status, 409, "another user must not archive the item");
+  const ownerStillHasItem = await apiA.request("shopping-items", { query: { id: first.id, limit: 1 } });
+  assert.equal(ownerStillHasItem[0]?.checked_at, completed.checked_at);
+  assert.equal(ownerStillHasItem[0]?.archived_at, null, "foreign archive must not change the owner's item");
 
   const ownerForgery = await apiA.request("shopping-items", {
     method: "POST",

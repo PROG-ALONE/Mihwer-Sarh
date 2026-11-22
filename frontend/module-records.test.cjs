@@ -56,6 +56,36 @@ test("time zone conversion is exact, DST-aware and rejects non-existent local ti
     { range_from: "2026-11-01", range_to: "2026-11-30" });
 });
 
+test("local midnight ranges honor UTC boundaries and 23/25-hour DST days", () => {
+  const meal = def("meal-logs");
+  assert.deepEqual(rangeQuery(meal, { start: "2026-06-15", end: "2026-06-15" }, "UTC"),
+    { range_from: "2026-06-15T00:00:00.000Z", range_to: "2026-06-16T00:00:00.000Z" });
+  assert.deepEqual(rangeQuery(meal, { start: "2026-06-15", end: "2026-06-15" }, "Asia/Baghdad"),
+    { range_from: "2026-06-14T21:00:00.000Z", range_to: "2026-06-15T21:00:00.000Z" });
+
+  const springDay = rangeQuery(meal, { start: "2026-03-08", end: "2026-03-08" }, "America/New_York");
+  assert.deepEqual(springDay, { range_from: "2026-03-08T05:00:00.000Z", range_to: "2026-03-09T04:00:00.000Z" });
+  assert.equal(Date.parse(springDay.range_to) - Date.parse(springDay.range_from), 23 * 60 * 60 * 1000);
+  const autumnDay = rangeQuery(meal, { start: "2026-11-01", end: "2026-11-01" }, "America/New_York");
+  assert.deepEqual(autumnDay, { range_from: "2026-11-01T04:00:00.000Z", range_to: "2026-11-02T05:00:00.000Z" });
+  assert.equal(Date.parse(autumnDay.range_to) - Date.parse(autumnDay.range_from), 25 * 60 * 60 * 1000);
+});
+
+test("DST gaps are rejected and repeated local times consistently choose the earlier instant", () => {
+  assert.equal(zonedLocalToUtc("2026-03-08T02:30", "America/New_York"), null);
+  assert.equal(zonedLocalToUtc("2026-03-29T01:30", "Europe/London"), null);
+  assert.equal(zonedLocalToUtc("2026-11-01T01:30", "America/New_York"), "2026-11-01T05:30:00.000Z");
+  assert.equal(zonedLocalToUtc("2026-10-25T01:30", "Europe/London"), "2026-10-25T00:30:00.000Z");
+  assert.equal(zonedLocalToUtc("2026-03-08T01:30", "America/New_York"), "2026-03-08T06:30:00.000Z");
+  assert.equal(zonedLocalToUtc("2026-03-08T03:30", "America/New_York"), "2026-03-08T07:30:00.000Z");
+});
+
+test("date-based subscription recurrence stays on calendar dates across DST changes", () => {
+  assert.equal(nextOccurrence("2026-03-07", "weekly"), "2026-03-14");
+  assert.equal(nextOccurrence("2026-10-25", "weekly"), "2026-11-01");
+  assert.equal(nextOccurrence("2026-03-31", "monthly"), "2026-04-30");
+});
+
 test("payloads never carry identity fields and validate source constraints", () => {
   const created = buildPayload(def("meal-logs"), { occurred_at: "2026-11-22T13:00", meal_type: "lunch", description: "أرز" }, { record: null, ctx });
   assert.deepEqual(created.payload, {

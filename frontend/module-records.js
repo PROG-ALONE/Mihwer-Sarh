@@ -293,15 +293,19 @@
     if (!match) return null;
     const [, y, mo, d, h, mi] = match.map(Number);
     const wanted = Date.UTC(y, mo - 1, d, h, mi);
-    let guess = wanted;
-    for (let i = 0; i < 3; i += 1) {
-      const p = zoneParts(new Date(guess), timeZone);
-      const shown = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
-      guess += wanted - shown;
+    const offsets = new Set();
+    for (let hours = -36; hours <= 36; hours += 6) {
+      const probe = wanted + hours * 60 * 60 * 1000;
+      const p = zoneParts(new Date(probe), timeZone);
+      offsets.add(Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - probe);
     }
-    const check = zoneParts(new Date(guess), timeZone);
-    if (`${check.year}-${check.month}-${check.day}T${check.hour}:${check.minute}` !== local) return null;
-    return new Date(guess).toISOString();
+    const matches = [...offsets]
+      .map(offset => wanted - offset)
+      .filter(instant => {
+        const check = zoneParts(new Date(instant), timeZone);
+        return `${check.year}-${check.month}-${check.day}T${check.hour}:${check.minute}` === local;
+      });
+    return matches.length ? new Date(Math.min(...matches)).toISOString() : null;
   }
 
   function addDays(date, days) {

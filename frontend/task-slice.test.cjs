@@ -80,6 +80,9 @@ test("day, centered-week, month, and year views filter the original task source"
   assert.deepEqual(slice.periodRange("2026-11-20", "week"), { start: "2026-11-17", end: "2026-11-23" });
   assert.deepEqual(slice.periodRange("2026-11-20", "month"), { start: "2026-11-01", end: "2026-11-30" });
   assert.deepEqual(slice.periodRange("2026-11-20", "year"), { start: "2026-01-01", end: "2026-12-31" });
+  assert.deepEqual(slice.periodRange("2027-01-01", "week"), { start: "2026-12-29", end: "2027-01-04" });
+  assert.deepEqual(slice.periodRange("2024-02-29", "month"), { start: "2024-02-01", end: "2024-02-29" });
+  assert.deepEqual(slice.periodRange("2024-12-31", "year"), { start: "2024-01-01", end: "2024-12-31" });
   assert.match(slice.render(), /Today/);
   assert.doesNotMatch(slice.render(), /Tomorrow/);
   slice.state.period = "week";
