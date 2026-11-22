@@ -21,16 +21,16 @@ const RESOURCES = Object.freeze({
   "goal-task-links": { table: "goal_task_links", mode: "append", hasId: false, order: "goal_id.desc,task_id.desc", journeyScoped: false },
   "goal-habit-links": { table: "goal_habit_links", mode: "append", hasId: false, order: "goal_id.desc,habit_id.desc", journeyScoped: false },
   "calendar-events": { table: "calendar_events", mode: "read-write", journeyScoped: true },
-  "daily-reflections": { table: "daily_reflections", mode: "read-write", journeyScoped: true },
-  "prayer-records": { table: "prayer_records", mode: "read-write", journeyScoped: true },
+  "daily-reflections": { table: "daily_reflections", mode: "read-write", journeyScoped: true, range: { column: "local_date", kind: "date" } },
+  "prayer-records": { table: "prayer_records", mode: "read-write", journeyScoped: true, range: { column: "local_date", kind: "date" } },
   "delete-prayer-records": { rpc: "delete_own_prayer_records", mode: "rpc" },
   "delete-health-records": { rpc: "delete_own_health_records", mode: "rpc" },
   "study-courses": { table: "study_courses", mode: "read-write", journeyScoped: true },
   "study-lessons": { table: "study_lessons", mode: "read-write", journeyScoped: false },
-  "study-sessions": { table: "study_sessions", mode: "append", journeyScoped: true },
-  "activity-sessions": { table: "activity_sessions", mode: "append", journeyScoped: true },
-  "sleep-records": { table: "sleep_records", mode: "read-write", journeyScoped: true },
-  "meal-logs": { table: "meal_logs", mode: "read-write", journeyScoped: true },
+  "study-sessions": { table: "study_sessions", mode: "append", journeyScoped: true, range: { column: "started_at", kind: "timestamp" } },
+  "activity-sessions": { table: "activity_sessions", mode: "append", journeyScoped: true, range: { column: "started_at", kind: "timestamp" } },
+  "sleep-records": { table: "sleep_records", mode: "read-write", journeyScoped: true, range: { column: "wake_local_date", kind: "date" } },
+  "meal-logs": { table: "meal_logs", mode: "read-write", journeyScoped: true, range: { column: "occurred_at", kind: "timestamp" } },
   notes: { table: "notes", mode: "read-write", journeyScoped: true },
   "note-goal-links": { table: "note_goal_links", mode: "append", hasId: false, order: "note_id.desc,goal_id.desc", journeyScoped: false },
   "note-task-links": { table: "note_task_links", mode: "append", hasId: false, order: "note_id.desc,task_id.desc", journeyScoped: false },
@@ -165,7 +165,7 @@ async function createHandler({
       if (method === "GET") {
         for (const key of [
           "journey_id", "local_date_from", "local_date_to", "effective_date_to",
-          "overlap_from", "overlap_to", "all_day_date_from", "all_day_date_to"
+          "overlap_from", "overlap_to", "all_day_date_from", "all_day_date_to", "range_from", "range_to"
         ]) {
           if (request.query?.[key] !== undefined && typeof request.query[key] !== "string") {
             throw new IdentityError("validation_failed", 400);
@@ -226,6 +226,20 @@ async function createHandler({
           }
           delete baseQuery.and;
           baseQuery.or = `(and(all_day_start.is.null,start_at.lt.${overlapTo},end_at.gt.${overlapFrom}),and(all_day_start.lte.${allDayTo},all_day_end.gt.${allDayFrom}))`;
+        }
+        const rangeFrom = queryValue(request, "range_from");
+        const rangeTo = queryValue(request, "range_to");
+        if (rangeFrom !== undefined || rangeTo !== undefined) {
+          const range = config.range;
+          const valid = range?.kind === "date"
+            ? validDate(rangeFrom) && validDate(rangeTo) && rangeFrom <= rangeTo &&
+              Date.parse(`${rangeTo}T00:00:00.000Z`) - Date.parse(`${rangeFrom}T00:00:00.000Z`) <= 366 * 86_400_000
+            : range?.kind === "timestamp" && validUtcTimestamp(rangeFrom) && validUtcTimestamp(rangeTo) &&
+              Date.parse(rangeFrom) < Date.parse(rangeTo) && Date.parse(rangeTo) - Date.parse(rangeFrom) <= 368 * 86_400_000;
+          if (!valid || baseQuery.and || id) throw new IdentityError("validation_failed", 400);
+          baseQuery.and = range.kind === "date"
+            ? `(${range.column}.gte.${rangeFrom},${range.column}.lte.${rangeTo})`
+            : `(${range.column}.gte.${rangeFrom},${range.column}.lt.${rangeTo})`;
         }
         if (id) baseQuery.id = `eq.${id}`;
         if (beforeId !== undefined) baseQuery.id = `lt.${beforeId}`;

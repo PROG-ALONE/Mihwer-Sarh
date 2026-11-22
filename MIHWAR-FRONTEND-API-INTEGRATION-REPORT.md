@@ -1,5 +1,32 @@
 # تقرير ربط واجهة مِحوَر بـAPI
 
+## تحديث إكمال الوحدات (22 نوفمبر 2026)
+
+- **مكوّن جديد:** [frontend/module-records.js](./frontend/module-records.js)، يُركَّب في [frontend/task-slice.js](./frontend/task-slice.js) على شاشة `#activities` بعد المصادقة فقط. يُصفَّر مع كل تغيّر في الهوية.
+- **كل وحدة تقرأ وتكتب جدولها الأصلي** عبر `/api/v1/<resource>` بـ`GET` و`POST` و`PATCH` مع `expected_version`. لا يرسل العميل `owner_id` أبداً.
+  - **اليوم:** `daily-reflections` و`habits` و`habit-revisions` و`calendar-events`.
+  - **التخطيط:** `projects` و`goals`.
+  - **الدراسة:** `study-courses` و`study-sessions`.
+  - **الصحة والصلاة:** `activity-sessions` و`sleep-records` و`meal-logs` و`prayer-records`.
+  - **الملاحظات:** `notes`.
+  - **المالية:** `financial-accounts` و`finance-categories` و`budgets` و`subscriptions` و`shopping-lists`، و`financial-transactions` للقراءة فقط.
+  - **الإعدادات:** `user-preferences`.
+- **رحلتي:** قسم «من الوحدات الأصلية ضمن الفترة» تحت المسار الزمني. يستعلم بـ`range_from`/`range_to` حسب اليوم أو الأسبوع أو الشهر أو السنة المختارة، ويحسب حدود اليوم بالمنطقة الزمنية للرحلة. «تعديل في المصدر» يفتح السجل الأصلي. لا نسخ ولا جداول عرض.
+- **الملفات المعدلة:**
+  - [api/_lib/mihwar-data.js](./api/_lib/mihwar-data.js) و[api/backend.test.cjs](./api/backend.test.cjs)
+  - [frontend/module-records.js](./frontend/module-records.js) و[frontend/module-records.test.cjs](./frontend/module-records.test.cjs) و[frontend/module-records.integration.test.cjs](./frontend/module-records.integration.test.cjs)
+  - [frontend/task-slice.js](./frontend/task-slice.js)
+  - [index.html](./index.html) و[scripts/prepare-static-assets.cjs](./scripts/prepare-static-assets.cjs) و[immersive-journey.css](./immersive-journey.css)
+  - لا ترحيل جديد للوحدات. ترحيل الجولة الوحيد هو تحصين المتجر القديم.
+- **خلل كشفه التكامل الحقيقي وأُصلح:** تعريف `daily-reflections` كان ينقصه نوع النطاق، فأرسل توقيتات بدل تواريخ، ورفضها الخادم بـ400. اختبار المحاكاة لم يكشفه. أُضيف اختبار يفرض أن تعلن كل وحدة زمنية نوع نطاقها.
+- **النتائج:**
+  - Node الافتراضي: 208 (203 ناجحاً و5 متخطاة). مع التكامل المحلي: 208/208.
+  - تكامل الوحدات الحقيقي: 15 وحدة، والعزل ورفض التزوير ناجحان.
+  - المتصفح على 390 و1440 بكسل: إنشاء، ثم إعادة تحميل واسترجاع، ثم تعديل من رحلتي. 0 أخطاء Console.
+- **الحالة الصادقة:**
+  - الصفحات القديمة («أهدافي»، والمشتريات، والملاحظات المحلية، ومحطات الرحلة الأصلية) لم تُستبدل، وما زالت محلية. البيانات المحفوظة تظهر في القسم المتصل فقط.
+  - لا يستطيع مستخدم حقيقي الدخول قبل عقد SSO.
+
 ## تحديث جولة الإكمال: Supabase المستضاف وPreview ولوحة المالك (21 نوفمبر 2026)
 
 - **قاعدة البيانات المستضافة:** المشروع `cakgrvanujcosglfuzcl`. طُبّقت الترحيلات الخمسة فعلياً، ونجح pgTAP المستضاف 145/145. التفاصيل في [تقرير التقدم](./MIHWAR-IMPLEMENTATION-PROGRESS.md).

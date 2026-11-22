@@ -235,6 +235,51 @@ test("daily habit and calendar windows are validated and remain owner-scoped", a
   }
 });
 
+test("module record ranges are validated per source column and remain owner-scoped", async () => {
+  let requestUrl;
+  const handler = await createHandler({
+    provider: createTestIdentityProvider(),
+    profileResolver: async () => ({ id: userA, status: "active" }),
+    env: { MIHWAR_SUPABASE_URL: "https://mihwar.test.invalid", MIHWAR_SUPABASE_ANON_KEY: "public-test-key" },
+    fetchImpl: async (url) => {
+      requestUrl = new URL(url);
+      return jsonResponse([]);
+    }
+  });
+  const journeyId = "00000000-0000-4000-8000-000000000011";
+  const dates = { journey_id: journeyId, range_from: "2026-11-01", range_to: "2026-11-30" };
+  const instants = { journey_id: journeyId, range_from: "2026-10-31T21:00:00.000Z", range_to: "2026-11-30T21:00:00.000Z" };
+  for (const [resource, query, expected] of [
+    ["daily-reflections", dates, "(local_date.gte.2026-11-01,local_date.lte.2026-11-30)"],
+    ["prayer-records", dates, "(local_date.gte.2026-11-01,local_date.lte.2026-11-30)"],
+    ["sleep-records", dates, "(wake_local_date.gte.2026-11-01,wake_local_date.lte.2026-11-30)"],
+    ["study-sessions", instants, "(started_at.gte.2026-10-31T21:00:00.000Z,started_at.lt.2026-11-30T21:00:00.000Z)"],
+    ["activity-sessions", instants, "(started_at.gte.2026-10-31T21:00:00.000Z,started_at.lt.2026-11-30T21:00:00.000Z)"],
+    ["meal-logs", instants, "(occurred_at.gte.2026-10-31T21:00:00.000Z,occurred_at.lt.2026-11-30T21:00:00.000Z)"]
+  ]) {
+    assert.equal((await handler(request("GET", resource, { query }))).status, 200, resource);
+    assert.equal(requestUrl.searchParams.get("owner_id"), `eq.${userA}`);
+    assert.equal(requestUrl.searchParams.get("journey_id"), `eq.${journeyId}`);
+    assert.equal(requestUrl.searchParams.get("and"), expected);
+  }
+  for (const [resource, query] of [
+    ["daily-reflections", instants],
+    ["meal-logs", dates],
+    ["notes", dates],
+    ["tasks", dates],
+    ["daily-reflections", { range_from: "2026-11-30", range_to: "2026-11-01" }],
+    ["daily-reflections", { range_from: "2025-01-01", range_to: "2026-11-30" }],
+    ["daily-reflections", { range_from: "2026-11-01" }],
+    ["daily-reflections", { range_from: ["2026-11-01"], range_to: "2026-11-30" }],
+    ["daily-reflections", { ...dates, id: "00000000-0000-4000-8000-000000000012" }],
+    ["meal-logs", { range_from: instants.range_to, range_to: instants.range_from }],
+    ["meal-logs", { range_from: "2026-11-01T00:00:00Z", range_to: instants.range_to }],
+    ["meal-logs", { range_from: "2024-01-01T00:00:00.000Z", range_to: "2025-01-05T00:00:00.000Z" }]
+  ]) {
+    assert.equal((await handler(request("GET", resource, { query }))).status, 400, `${resource} ${JSON.stringify(query)}`);
+  }
+});
+
 test("habit progress updates use a verified database RPC and preserve version constraints", async () => {
   const id = "00000000-0000-4000-8000-000000000063";
   let url;

@@ -22,6 +22,7 @@ const STATIC_FILES = [
   "frontend/day-sources.js",
   "frontend/prayer-summary.js",
   "frontend/daily-summary.js",
+  "frontend/module-records.js",
   "frontend/task-slice.js",
   "frontend/owner-panel.js",
   "app.js",

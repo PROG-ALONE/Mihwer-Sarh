@@ -2774,3 +2774,10 @@ body.journey-day .day-hero > .journey-viewport .scenic-schedule summary {
   grid-row:2;
   min-width:0;
 }
+
+.module-records .module-group .levels button.active,
+body.journey-worldwide .module-records .module-group .levels button.active {
+  background:linear-gradient(135deg,#fff1ce,#f3bd5a);
+  color:#283b51;
+  border-color:#f3bd5a;
+}

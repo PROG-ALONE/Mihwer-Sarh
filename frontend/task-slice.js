@@ -11,6 +11,7 @@
   const { nextPrayer } = root.MihwerPrayerSummary || require("./prayer-summary");
   const { summarize: summarizeDay, render: renderDay, renderPrayer, renderEventControls } =
     root.MihwerDailySummary || require("./daily-summary");
+  const { createModuleRecordsController } = root.MihwerModuleRecords || require("./module-records");
   const state = {
     auth: "loading",
     busy: false,
@@ -110,6 +111,7 @@
   });
   let repository = createTaskRepository(client);
   let daySourcesRepository = createDaySourcesRepository(client);
+  const moduleRecords = createModuleRecordsController({ getClient: () => client, notify: () => notifyRender() });
   let sessionProvider = null;
   let refreshController = null;
   let actionController = null;
@@ -149,6 +151,7 @@
   }
 
   function clearPrivateState() {
+    moduleRecords?.reset();
     refreshController?.abort();
     refreshController = null;
     actionController?.abort();
@@ -532,6 +535,12 @@
       return aDate.localeCompare(bDate) || (aOrder < bOrder ? -1 : aOrder > bOrder ? 1 : 0) ||
         a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
     });
+    const moduleContext = {
+      journeyId: state.journey.id, timeZone: state.journey.timeZone,
+      today: state.loadedToday || currentDate(state.journey.timeZone), language
+    };
+    const modulePanel = moduleRecords ? moduleRecords.render(moduleContext) : "";
+    const journeyRecords = moduleRecords ? moduleRecords.renderJourney(moduleContext, range) : "";
     const navigationLocked = state.busy || state.eventDraft?.surface === "timeline";
     const draftSource = state.eventDraft?.surface === "timeline" ? state.timelineAppointments : state.dailySources;
     const missingDraft = state.eventDraft && draftSource.status === "ready" && !eventForDraft();
@@ -566,8 +575,10 @@
         state.timelineAppointments.status === "unavailable" ? `<p class="muted">${escapeHtml(text("timelineUnavailable"))}</p>` : ""}
       <div class="backend-timeline">${timeline.map(event => timelineRow(event, range)).join("") ||
         (state.timelineAppointments.status === "ready" ? `<p class="muted">${escapeHtml(text("timelineEmpty"))}</p>` : "")}</div>
+      ${journeyRecords}
       <h2>${escapeHtml(text("title"))}</h2>
-      <div class="backend-task-list">${ordered.map(taskRow).join("") || `<p class="muted">${escapeHtml(text("empty"))}</p>`}</div>`;
+      <div class="backend-task-list">${ordered.map(taskRow).join("") || `<p class="muted">${escapeHtml(text("empty"))}</p>`}</div>
+      ${modulePanel}`;
   }
 
   async function save(form) {
@@ -730,6 +741,7 @@
 
   function bind() {
     if (typeof document === "undefined") return;
+    moduleRecords?.bind(document);
     document.addEventListener("submit", event => {
       const activationForm = event.target.closest("[data-activation-form]");
       if (activationForm) {
