@@ -2,6 +2,8 @@
 
 ## تحديث إكمال الوحدات (22 نوفمبر 2026)
 
+> **الربط غير مكتمل.** محطات «رحلتي» الأصلية، وصفحتا «أهدافي» والملاحظات القديمتان، وصفحة المشتريات القديمة ما زالت محلية. وعناصر قوائم المشتريات وتكرارات الاشتراكات والمرفقات غير متصلة. التفاصيل في [تقرير التقدم](./MIHWAR-IMPLEMENTATION-PROGRESS.md).
+
 - **مكوّن جديد:** [frontend/module-records.js](./frontend/module-records.js)، يُركَّب في [frontend/task-slice.js](./frontend/task-slice.js) على شاشة `#activities` بعد المصادقة فقط. يُصفَّر مع كل تغيّر في الهوية.
 - **كل وحدة تقرأ وتكتب جدولها الأصلي** عبر `/api/v1/<resource>` بـ`GET` و`POST` و`PATCH` مع `expected_version`. لا يرسل العميل `owner_id` أبداً.
   - **اليوم:** `daily-reflections` و`habits` و`habit-revisions` و`calendar-events`.
