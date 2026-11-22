@@ -6,10 +6,25 @@
   if (root) root.MihwerModuleRecords = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, root => {
   const { ApiError } = root.MihwerApiClient || require("./api-client");
+  const isUuid = root.MihwerDataValidation?.isUuid || require("./data-validation").isUuid;
 
   const STATUS = ["active", "paused", "completed", "archived"];
   const CURRENCY = { name: "currency", type: "text", required: true, pattern: "^[A-Z]{3}$", max: 3, initial: "SAR" };
   const opt = (values, ar, en) => values.map((value, index) => ({ value, ar: ar[index], en: en[index] }));
+  function nextOccurrence(date, cadence) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return "";
+    const parsed = new Date(`${date}T00:00:00.000Z`);
+    if (!Number.isFinite(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== date) return "";
+    const [year, month, day] = date.split("-").map(Number);
+    if (cadence === "weekly") return new Date(Date.UTC(year, month - 1, day + 7)).toISOString().slice(0, 10);
+    const months = cadence === "monthly" ? 1 : cadence === "quarterly" ? 3 : cadence === "yearly" ? 12 : 0;
+    if (!months) return "";
+    const targetMonth = month - 1 + months;
+    const targetYear = year + Math.floor(targetMonth / 12);
+    const normalizedMonth = targetMonth % 12;
+    const lastDay = new Date(Date.UTC(targetYear, normalizedMonth + 1, 0)).getUTCDate();
+    return new Date(Date.UTC(targetYear, normalizedMonth, Math.min(day, lastDay))).toISOString().slice(0, 10);
+  }
   const statusOptions = opt(STATUS, ["نشط", "متوقف مؤقتاً", "مكتمل", "مؤرشف"], ["Active", "Paused", "Completed", "Archived"]);
   const RRULES = opt(["", "FREQ=DAILY", "FREQ=WEEKLY", "FREQ=MONTHLY", "FREQ=YEARLY"],
     ["بلا تكرار", "يومي", "أسبوعي", "شهري", "سنوي"], ["No repeat", "Daily", "Weekly", "Monthly", "Yearly"]);
@@ -48,6 +63,16 @@
         field("unit", "text", { schedule: true, required: true, max: 40, initial: "times", label: { ar: "الوحدة", en: "Unit" } }),
         field("effective_date", "date", { scheduleDate: true, label: { ar: "يسري تغيير الجدول من", en: "Schedule change effective" }, initial: ctx => ctx.today })
       ], summary: r => `${r.target} ${r.unit} · ${r.frequency}` },
+    { key: "habit-records", group: "day", resource: "habit-records", journey: true, editable: true, timeline: true,
+      dateField: "local_date", range: "date", dependencies: ["habits"],
+      ar: "سجلات العادات", en: "Habit records",
+      fields: [
+        field("habit_id", "relation", { required: true, optionsFrom: "habits", label: { ar: "العادة", en: "Habit" } }),
+        field("local_date", "date", { required: true, label: { ar: "التاريخ", en: "Date" }, initial: ctx => ctx.today }),
+        field("status", "select", { required: true, label: { ar: "الحالة", en: "Status" },
+          options: opt(["completed", "partial", "skipped"], ["مكتملة", "جزئية", "تم تخطيها"], ["Completed", "Partial", "Skipped"]) }),
+        field("amount", "number", { min: 0, step: "0.01", label: { ar: "المقدار", en: "Amount" } })
+      ], title: r => r.habit_id, summary: r => `${r.status}${r.amount == null ? "" : ` · ${r.amount}`}` },
     { key: "calendar-events", group: "day", resource: "calendar-events", journey: true, editable: true, ar: "المواعيد", en: "Appointments",
       dateField: "start_at", zone: true,
       fields: [
@@ -57,7 +82,7 @@
         field("end_at", "datetime", { required: true, timed: true, label: { ar: "ينتهي", en: "Ends" } }),
         field("recurrence_rule", "select", { label: { ar: "التكرار", en: "Repeat" }, options: RRULES, nullable: true })
       ], summary: r => r.recurrence_rule || "" },
-    { key: "projects", group: "plan", resource: "projects", journey: true, editable: true, ar: "المشاريع", en: "Projects", dateField: "target_date",
+    { key: "projects", group: "plan", resource: "projects", editable: true, ar: "المشاريع", en: "Projects", dateField: "target_date",
       fields: [field("title", "text", { required: true, max: 200 }), field("description", "textarea"),
         field("start_date", "date"), field("target_date", "date"), field("status", "select", { options: statusOptions })],
       summary: r => r.status },
@@ -67,6 +92,21 @@
           options: opt(["short", "medium", "long"], ["قصير", "متوسط", "طويل"], ["Short", "Medium", "Long"]) }),
         field("start_date", "date", { required: true, initial: ctx => ctx.today }), field("target_date", "date"),
         field("status", "select", { options: statusOptions })], summary: r => `${r.time_horizon} · ${r.status}` },
+    { key: "project-milestones", group: "plan", resource: "project-milestones", editable: true, ar: "مراحل المشاريع", en: "Project milestones", dateField: "due_date",
+      dependencies: ["projects"],
+      fields: [
+        field("project_id", "relation", { required: true, optionsFrom: "projects", label: { ar: "المشروع", en: "Project" } }),
+        field("title", "text", { required: true, max: 200 }),
+        field("due_date", "date", { label: { ar: "تاريخ الاستحقاق", en: "Due date" } }),
+        field("status", "select", { required: true, label: { ar: "الحالة", en: "Status" },
+          options: opt(["pending", "completed", "cancelled"], ["قيد التنفيذ", "مكتملة", "ملغاة"], ["Pending", "Completed", "Cancelled"]) })
+      ], summary: r => r.status },
+    { key: "goal-project-links", group: "plan", resource: "goal-project-links", hasId: false, editable: false, appendOnly: true,
+      ar: "ربط الأهداف بالمشاريع", en: "Link goals to projects", dependencies: ["goals", "projects"],
+      fields: [
+        field("goal_id", "relation", { required: true, optionsFrom: "goals", label: { ar: "الهدف", en: "Goal" } }),
+        field("project_id", "relation", { required: true, optionsFrom: "projects", label: { ar: "المشروع", en: "Project" } })
+      ], title: r => `${r.goal_id} · ${r.project_id}` },
     { key: "study-courses", group: "study", resource: "study-courses", journey: true, editable: true, ar: "المقررات", en: "Courses",
       fields: [field("title", "text", { required: true, max: 200 }), field("provider", "text", { label: { ar: "الجهة", en: "Provider" } }),
         field("status", "select", { options: statusOptions })], summary: r => r.provider || r.status },
@@ -105,7 +145,7 @@
         field("after_units", "number", { min: 0, max: 20, step: "1", initial: 0, label: { ar: "السنة البعدية المؤداة", en: "After done" } }),
         field("target_after", "number", { min: 0, max: 20, step: "1", initial: 0, label: { ar: "السنة البعدية", en: "After target" } })
       ], title: r => r.prayer_key, summary: r => `${r.fard_units}/${r.target_fard}` },
-    { key: "notes", group: "notes", resource: "notes", journey: true, editable: true, ar: "الملاحظات والأفكار", en: "Notes and ideas",
+    { key: "notes", group: "notes", resource: "notes", editable: true, archivable: true, archiveColumn: "deleted_at", ar: "الملاحظات والأفكار", en: "Notes and ideas",
       dateField: "note_date",
       fields: [field("kind", "select", { required: true, label: { ar: "النوع", en: "Kind" }, options: opt(["note", "idea", "link"], ["ملاحظة", "فكرة", "رابط"], ["Note", "Idea", "Link"]) }),
         field("title", "text", { max: 200 }), field("body", "textarea", { required: true, max: 50000, label: { ar: "النص", en: "Text" } }),
@@ -130,10 +170,28 @@
         field("cadence", "select", { required: true, label: { ar: "الدورة", en: "Cadence" }, options: opt(["monthly", "weekly", "quarterly", "yearly"], ["شهري", "أسبوعي", "ربع سنوي", "سنوي"], ["Monthly", "Weekly", "Quarterly", "Yearly"]) }),
         field("next_due_date", "date", { required: true, label: { ar: "الاستحقاق التالي", en: "Next due" }, initial: ctx => ctx.today }),
         field("status", "select", { options: opt(["active", "paused", "cancelled"], ["نشط", "متوقف", "ملغى"], ["Active", "Paused", "Cancelled"]) })],
-      summary: r => `${r.amount} ${r.currency} · ${r.cadence}` },
+      summary: r => `${r.amount} ${r.currency} · ${r.cadence} · ${nextOccurrence(r.next_due_date, r.cadence)}` },
+    { key: "subscription-occurrences", group: "finance", resource: "subscription-occurrences", editable: true, generateOnly: true, ar: "استحقاقات الاشتراكات", en: "Subscription occurrences",
+      dependencies: ["subscriptions"],
+      title: r => r.due_date,
+      fields: [
+        field("subscription_id", "relation", { required: true, createOnly: true, optionsFrom: "subscriptions", label: { ar: "الاشتراك", en: "Subscription" } }),
+        field("period_start", "date", { required: true, createOnly: true, label: { ar: "بداية الدورة", en: "Period start" } }),
+        field("due_date", "date", { required: true, createOnly: true, label: { ar: "تاريخ الاستحقاق", en: "Due date" } }),
+        field("status", "select", { required: true, label: { ar: "الحالة", en: "Status" },
+          options: opt(["due", "paid", "skipped", "cancelled"], ["مستحق", "مسجل كمدفوع", "تم تجاوزه", "ملغى"], ["Due", "Recorded paid", "Skipped", "Cancelled"]) })
+      ], summary: r => `${r.due_date} · ${r.status}` },
     { key: "shopping-lists", group: "finance", resource: "shopping-lists", editable: true, ar: "قوائم المشتريات", en: "Shopping lists",
       fields: [field("title", "text", { required: true, max: 160 }),
         field("status", "select", { options: opt(["active", "archived"], ["نشطة", "مؤرشفة"], ["Active", "Archived"]) })], summary: r => r.status },
+    { key: "shopping-items", group: "finance", resource: "shopping-items", editable: true, archivable: true, archiveColumn: "archived_at", completeField: "checked_at",
+      zone: true, ar: "عناصر قوائم المشتريات", en: "Shopping list items",
+      dependencies: ["shopping-lists"],
+      fields: [
+        field("list_id", "relation", { required: true, optionsFrom: "shopping-lists", label: { ar: "القائمة", en: "List" } }),
+        field("name", "text", { required: true, max: 200, label: { ar: "العنصر", en: "Item" } }),
+        field("quantity", "text", { max: 120, label: { ar: "الكمية", en: "Quantity" } })
+      ], summary: r => r.quantity || "" },
     { key: "financial-transactions", group: "finance", resource: "financial-transactions", editable: false, readOnly: true,
       ar: "المعاملات (عرض فقط)", en: "Transactions (read only)", dateField: "occurred_at", fields: [],
       title: r => `${r.kind} · ${r.amount} ${r.currency}` },
@@ -169,6 +227,15 @@
       readOnly: "للعرض فقط؛ لا تُنشأ المعاملات المالية من الواجهة دون مسار محاسبي ذري.",
       appendOnly: "سجل إلحاقي: يُضاف ولا يُعدّل.", limit: "يعرض أحدث ١٠٠ سجل.", journeyHeading: "من الوحدات الأصلية ضمن الفترة",
       journeyEmpty: "لا توجد سجلات من الوحدات ضمن الفترة.", sourceEdit: "تعديل في المصدر",
+      archive: "أرشفة", complete: "إنجاز", reopen: "إعادة فتح", recordOccurrence: "إنشاء الاستحقاق التالي",
+      occurrenceRecorded: "حُفظ الاستحقاق على الخادم دون إنشاء معاملة مالية.", occurrenceExists: "هذا الاستحقاق موجود مسبقاً؛ لم يُنشأ تكرار.",
+      archived: "أكد الخادم أرشفة السجل.", completed: "أكد الخادم تحديث حالة العنصر.",
+      attachmentHeading: "المرفقات الخاصة", attachmentAdd: "رفع مرفق", attachmentLoading: "جارٍ تحميل المرفقات…",
+      attachmentEmpty: "لا توجد مرفقات لهذا السجل.", attachmentPreparing: "جارٍ تجهيز الرفع…",
+      attachmentUploading: "جارٍ رفع الملف إلى التخزين الخاص…", attachmentVerifying: "جارٍ التحقق من محتوى الملف على الخادم…",
+      attachmentSaved: "أكد الخادم رفع المرفق والتحقق من محتواه.", attachmentDeleted: "أكد الخادم حذف المرفق.",
+      attachmentDelete: "حذف المرفق", attachmentDownload: "تنزيل", attachmentRetry: "إعادة تحميل المرفقات",
+      attachmentError: "تعذر تحميل المرفق أو حفظه. لم يُعرض على أنه محفوظ.",
       allDayEvent: "موعد طوال اليوم: يمكن تعديل العنوان والتفاصيل والتكرار فقط.",
       scheduleNote: "تغيير التكرار أو الأيام أو الهدف يُحفظ كمراجعة جديدة دون تغيير السجلات السابقة.",
       revisionExists: "توجد مراجعة جدول بهذا التاريخ. اختر تاريخ سريان لاحقاً.", dayExists: "سجل هذا اليوم موجود وفُتح للتعديل بدلاً من إنشاء نسخة ثانية.",
@@ -186,6 +253,15 @@
       readOnly: "Read only; transactions are not created from the interface without an atomic ledger flow.",
       appendOnly: "Append-only log: entries are added, not edited.", limit: "Shows the latest 100 records.", journeyHeading: "From original modules in this period",
       journeyEmpty: "No module records in this period.", sourceEdit: "Edit at source",
+      archive: "Archive", complete: "Complete", reopen: "Reopen", recordOccurrence: "Create next occurrence",
+      occurrenceRecorded: "The server saved the occurrence; no financial transaction was created.", occurrenceExists: "This occurrence already exists; no duplicate was created.",
+      archived: "The server confirmed the record was archived.", completed: "The server confirmed the item status update.",
+      attachmentHeading: "Private attachments", attachmentAdd: "Upload attachment", attachmentLoading: "Loading attachments…",
+      attachmentEmpty: "This record has no attachments.", attachmentPreparing: "Preparing secure upload…",
+      attachmentUploading: "Uploading to private storage…", attachmentVerifying: "Verifying file content on the server…",
+      attachmentSaved: "The server confirmed the attachment upload and content verification.", attachmentDeleted: "The server confirmed the attachment was deleted.",
+      attachmentDelete: "Delete attachment", attachmentDownload: "Download", attachmentRetry: "Reload attachments",
+      attachmentError: "The attachment could not be loaded or saved. It was not shown as saved.",
       allDayEvent: "All-day appointment: only title, details and repeat can be edited.",
       scheduleNote: "Frequency, day or target changes are saved as a new revision without altering earlier records.",
       revisionExists: "A schedule revision already exists on that date. Choose a later effective date.", dayExists: "This day's record exists and was opened for editing instead of creating a duplicate.",
@@ -338,7 +414,7 @@
       if (a && b && b < a && definition.fields.some(item => item.name === to)) return { error: to };
     }
     if (!record) {
-      if (definition.journey) payload.journey_id = ctx.journeyId;
+      if (definition.journey && definition.key !== "habit-records") payload.journey_id = ctx.journeyId;
       if (definition.zone) payload.time_zone = ctx.timeZone;
     }
     return { payload };
@@ -346,14 +422,37 @@
 
   function createModuleRecordsRepository(client) {
     const request = (...args) => client().request(...args);
+    async function listAll(definition, query, signal) {
+      const rows = await request(definition.resource, { query: { ...query, limit: 100 }, signal });
+      if (!Array.isArray(rows) || rows.length > 100) throw new ApiError("invalid_response", 502);
+      if (definition.single || definition.hasId === false || rows.length < 100) return rows;
+      const result = [...rows];
+      let previousId = null;
+      for (const row of rows) {
+        const id = typeof row?.id === "string" ? row.id.toLowerCase() : "";
+        if (!isUuid(id) || previousId !== null && id >= previousId) throw new ApiError("invalid_paginated_response", 502);
+        previousId = id;
+      }
+      while (true) {
+        const page = await request(definition.resource, {
+          query: { ...query, limit: 100, before_id: previousId }, signal
+        });
+        if (!Array.isArray(page) || page.length > 100) throw new ApiError("invalid_response", 502);
+        for (const row of page) {
+          const id = typeof row?.id === "string" ? row.id.toLowerCase() : "";
+          if (!isUuid(id) || id >= previousId) throw new ApiError("invalid_paginated_response", 502);
+          previousId = id;
+          result.push(row);
+        }
+        if (page.length < 100) return result;
+      }
+    }
     return Object.freeze({
       async list(definition, { journeyId, range, signal } = {}) {
-        const query = { limit: 100 };
+        const query = {};
         if (definition.journey) query.journey_id = journeyId;
         if (range) Object.assign(query, range);
-        const rows = await request(definition.resource, { query, signal });
-        if (!Array.isArray(rows)) throw new ApiError("invalid_response", 502);
-        return rows;
+        return listAll(definition, query, signal);
       },
       async create(definition, payload, { signal } = {}) {
         const rows = await request(definition.resource, { method: "POST", body: payload, signal });
@@ -393,7 +492,8 @@
     let ctx = null;
     const state = {
       active: "daily-reflections", lists: new Map(), preferences: { status: "idle", row: null },
-      editing: null, busy: false, notice: "", error: "", journey: { key: "", status: "idle", items: [] }
+      editing: null, busy: false, notice: "", error: "", journey: { key: "", status: "idle", items: [] },
+      attachments: { status: "idle", rows: [], links: [] }, attachmentProgress: ""
     };
     const text = key => messages[language]?.[key] || messages.ar[key] || key;
     const name = definition => definition[language] || definition.ar;
@@ -411,6 +511,8 @@
       state.notice = "";
       state.error = "";
       state.journey = { key: "", status: "idle", items: [] };
+      state.attachments = { status: "idle", rows: [], links: [] };
+      state.attachmentProgress = "";
     }
 
     function errorCode(error) {
@@ -455,6 +557,10 @@
       state.lists.set(key, { status: "loading", rows: existing?.rows || [] });
       notify();
       try {
+        if (definition.dependencies?.length) {
+          await Promise.all(definition.dependencies.map(dependency => loadList(dependency)));
+          if (current !== epoch) return;
+        }
         await loadPreferences(current);
         if (current !== epoch) return;
         if (definition.single) {
@@ -482,12 +588,129 @@
           }
           const sorted = [...rows].sort((a, b) => String(b[definition.dateField] || b.updated_at || b.created_at || "").localeCompare(String(a[definition.dateField] || a.updated_at || a.created_at || "")));
           state.lists.set(key, { status: "ready", rows: sorted });
+          if (key === "projects" && BY_KEY.has("project-milestones") && !state.lists.has("project-milestones")) {
+            queueMicrotask(() => loadList("project-milestones"));
+          }
         }
       } catch (error) {
         if (current !== epoch) return;
         state.lists.set(key, { status: "error", rows: [], error: errorCode(error) });
       }
       notify();
+    }
+
+    async function loadAttachments(force = false) {
+      if (!ctx || (!force && ["loading", "ready"].includes(state.attachments.status))) return;
+      const current = epoch;
+      state.attachments = { status: "loading", rows: [], links: [] };
+      notify();
+      try {
+        const [rows, links] = await Promise.all([
+          getClient().request("attachments", { query: { limit: 100 } }),
+          getClient().request("attachment-links", { query: { limit: 100 } })
+        ]);
+        if (current !== epoch) return;
+        state.attachments = {
+          status: "ready",
+          rows: (Array.isArray(rows) ? rows : []).filter(row => row.state === "ready" && !row.deleted_at),
+          links: Array.isArray(links) ? links : []
+        };
+      } catch {
+        if (current !== epoch) return;
+        state.attachments = { status: "error", rows: [], links: [] };
+      }
+      notify();
+    }
+
+    function noteAttachments(noteId) {
+      const ids = new Set(state.attachments.links.filter(link => link.note_id === noteId).map(link => link.attachment_id));
+      return state.attachments.rows.filter(row => ids.has(row.id));
+    }
+
+    async function uploadNoteAttachment(noteId, file) {
+      if (!file || state.busy || !ctx) return;
+      const client = getClient();
+      if (typeof client.uploadAttachment !== "function") {
+        state.error = "attachmentError";
+        notify();
+        return;
+      }
+      const current = epoch;
+      state.busy = true;
+      state.error = "";
+      state.notice = "";
+      state.attachmentProgress = text("attachmentPreparing");
+      notify();
+      try {
+        await client.uploadAttachment(file, {
+          noteId,
+          onProgress: phase => {
+            if (current === epoch) {
+              const label = {
+                preparing: "attachmentPreparing",
+                uploading: "attachmentUploading",
+                verifying: "attachmentVerifying"
+              }[phase];
+              state.attachmentProgress = text(label || "attachmentUploading");
+              notify();
+            }
+          }
+        });
+        if (current !== epoch) return;
+        state.attachmentProgress = "";
+        state.notice = text("attachmentSaved");
+        state.attachments.status = "idle";
+        await loadAttachments(true);
+      } catch (error) {
+        if (current !== epoch) return;
+        state.attachmentProgress = "";
+        state.error = errorCode(error) === "error" ? "attachmentError" : errorCode(error);
+      } finally {
+        if (current === epoch) {
+          state.busy = false;
+          notify();
+        }
+      }
+    }
+
+    async function downloadAttachment(id) {
+      if (state.busy) return;
+      state.busy = true;
+      state.error = "";
+      notify();
+      try {
+        const result = await getClient().request("attachments", { query: { id } });
+        if (typeof result?.download_url !== "string") throw new ApiError("invalid_response", 502);
+        root.location?.assign?.(result.download_url);
+      } catch (error) {
+        state.error = errorCode(error);
+      } finally {
+        state.busy = false;
+        notify();
+      }
+    }
+
+    async function deleteAttachment(id) {
+      if (state.busy) return;
+      const current = epoch;
+      state.busy = true;
+      state.error = "";
+      state.notice = "";
+      notify();
+      try {
+        await getClient().request("attachments", { method: "DELETE", query: { id } });
+        if (current !== epoch) return;
+        state.notice = text("attachmentDeleted");
+        state.attachments.status = "idle";
+        await loadAttachments(true);
+      } catch (error) {
+        if (current === epoch) state.error = errorCode(error);
+      } finally {
+        if (current === epoch) {
+          state.busy = false;
+          notify();
+        }
+      }
     }
 
     async function loadJourney(range) {
@@ -498,6 +721,7 @@
       state.journey = { key, status: "loading", items: [] };
       try {
         await loadPreferences(current);
+        await loadList("habits");
         if (current !== epoch) return;
         const sources = MODULES.filter(definition => definition.timeline && !consentMissing(definition));
         const results = await Promise.all(sources.map(async definition => {
@@ -518,9 +742,45 @@
     }
 
     function recordTitle(definition, record) {
+      if (definition.key === "habit-records") {
+        return state.lists.get("habits")?.rows.find(item => item.id === record.habit_id)?.name || name(definition);
+      }
+      if (definition.key === "goal-project-links") {
+        const goal = state.lists.get("goals")?.rows.find(item => item.id === record.goal_id)?.title;
+        const project = state.lists.get("projects")?.rows.find(item => item.id === record.project_id)?.title;
+        return [goal, project].filter(Boolean).join(" · ") || name(definition);
+      }
       const value = definition.title ? definition.title(record) : record.title || record.name;
       const option = definition.fields.find(item => item.name === "prayer_key")?.options.find(o => o.value === value);
       return localized(option ? option : value) || name(definition);
+    }
+
+    function persistedProgress(definition, record) {
+      const projects = state.lists.get("projects")?.rows || [];
+      const milestones = state.lists.get("project-milestones")?.rows || [];
+      const links = state.lists.get("goal-project-links")?.rows || [];
+      if (definition.key === "projects") {
+        const related = milestones.filter(item => item.project_id === record.id && item.status !== "cancelled");
+        return related.length ? { done: related.filter(item => item.status === "completed").length, total: related.length } : null;
+      }
+      if (definition.key === "goals") {
+        const projectIds = links.filter(item => item.goal_id === record.id).map(item => item.project_id);
+        const related = projects.filter(item => projectIds.includes(item.id));
+        if (!related.length) return null;
+        let done = 0, total = 0;
+        for (const project of related) {
+          const projectMilestones = milestones.filter(item => item.project_id === project.id && item.status !== "cancelled");
+          if (projectMilestones.length) {
+            done += projectMilestones.filter(item => item.status === "completed").length;
+            total += projectMilestones.length;
+          } else {
+            done += project.status === "completed" ? 1 : 0;
+            total += 1;
+          }
+        }
+        return { done, total };
+      }
+      return null;
     }
 
     function recordRow(definition, record) {
@@ -528,10 +788,37 @@
       const time = definition.dateField && /T/.test(record[definition.dateField] || "")
         ? utcToZonedLocal(record[definition.dateField], record.time_zone || ctx.timeZone).slice(11) : "";
       const summary = definition.summary ? definition.summary(record) : "";
+      const progress = persistedProgress(definition, record);
+      const relatedName = definition.key === "shopping-items"
+        ? state.lists.get("shopping-lists")?.rows.find(item => item.id === record.list_id)?.title
+        : definition.key === "subscription-occurrences"
+          ? state.lists.get("subscriptions")?.rows.find(item => item.id === record.subscription_id)?.name
+          : null;
+      const actions = [
+        definition.completeField ? `<button class="secondary" type="button" data-module-complete="${escapeHtml(definition.key)}" data-record-id="${escapeHtml(record.id)}">${escapeHtml(record[definition.completeField] ? text("reopen") : text("complete"))}</button>` : "",
+        definition.archivable && !record[definition.archiveColumn] ? `<button class="secondary" type="button" data-module-archive="${escapeHtml(definition.key)}" data-record-id="${escapeHtml(record.id)}">${escapeHtml(text("archive"))}</button>` : "",
+        definition.key === "subscriptions" && record.status === "active" ? `<button class="secondary" type="button" data-module-create-occurrence="${escapeHtml(record.id)}">${escapeHtml(text("recordOccurrence"))}</button>` : "",
+        definition.editable ? `<button class="secondary" type="button" data-module-edit="${escapeHtml(definition.key)}" data-record-id="${escapeHtml(record.id || "")}" ${state.busy ? "disabled" : ""}>${escapeHtml(text("edit"))}</button>` : ""
+      ].filter(Boolean).join("");
+      const attachmentRows = definition.key === "notes" ? noteAttachments(record.id) : [];
+      const attachmentPanel = definition.key !== "notes" ? "" : `<section class="module-attachments" aria-label="${escapeHtml(text("attachmentHeading"))}">
+        <h4>${escapeHtml(text("attachmentHeading"))}</h4>
+        ${state.attachments.status === "loading" ? `<p class="muted" role="status">${escapeHtml(text("attachmentLoading"))}</p>` : ""}
+        ${state.attachments.status === "error" ? `<p role="alert">${escapeHtml(text("attachmentError"))}</p><button class="secondary" type="button" data-module-attachment-retry>${escapeHtml(text("attachmentRetry"))}</button>` : ""}
+        ${state.attachments.status === "ready" ? attachmentRows.map(file => `<div class="options">
+          <span>${escapeHtml(file.content_type)} · ${escapeHtml(String(file.byte_size))} B</span>
+          <button class="secondary" type="button" data-module-attachment-download="${escapeHtml(file.id)}" ${state.busy ? "disabled" : ""}>${escapeHtml(text("attachmentDownload"))}</button>
+          <button class="secondary" type="button" data-module-attachment-delete="${escapeHtml(file.id)}" ${state.busy ? "disabled" : ""}>${escapeHtml(text("attachmentDelete"))}</button>
+        </div>`).join("") || `<p class="muted">${escapeHtml(text("attachmentEmpty"))}</p>` : ""}
+        <label class="field">${escapeHtml(text("attachmentAdd"))}<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf,text/plain" data-module-attachment-file data-note-id="${escapeHtml(record.id)}" ${state.busy ? "disabled" : ""}></label>
+        ${state.attachmentProgress ? `<p role="status">${escapeHtml(state.attachmentProgress)}</p>` : ""}
+      </section>`;
       return `<article class="panel backend-task module-record" data-module-record="${escapeHtml(record.id || "preferences")}">
         <h3>${escapeHtml(String(recordTitle(definition, record)).slice(0, 160))}</h3>
-        <p class="muted">${escapeHtml([date, time, summary].filter(Boolean).join(" · "))}</p>
-        ${definition.editable ? `<div class="options"><button class="secondary" type="button" data-module-edit="${escapeHtml(definition.key)}" data-record-id="${escapeHtml(record.id || "")}" ${state.busy ? "disabled" : ""}>${escapeHtml(text("edit"))}</button></div>` : ""}
+        <p class="muted">${escapeHtml([relatedName, date, time, summary].filter(Boolean).join(" · "))}</p>
+        ${progress ? `<p class="muted">${escapeHtml(language === "ar" ? "التقدم من السجلات المرتبطة" : "Progress from linked records")}: <bdi dir="ltr">${progress.done}/${progress.total} · ${Math.round(progress.done / progress.total * 100)}%</bdi></p><progress max="${progress.total}" value="${progress.done}" aria-label="${escapeHtml(text("heading"))}"></progress>` : ""}
+        ${actions ? `<div class="options">${actions}</div>` : ""}
+        ${attachmentPanel}
       </article>`;
     }
 
@@ -552,6 +839,12 @@
       if (item.type === "select") {
         return `<label class="field">${labelText}<select name="${item.name}" ${item.required ? "required" : ""}>${item.options.map(option =>
           `<option value="${escapeHtml(option.value)}" ${String(value) === option.value ? "selected" : ""}>${escapeHtml(option[language] || option.ar)}</option>`).join("")}</select></label>`;
+      }
+      if (item.type === "relation") {
+        const options = state.lists.get(item.optionsFrom)?.rows || [];
+        const optionLabel = option => option.title || option.name || option.body || option.id;
+        return `<label class="field">${labelText}<select name="${item.name}" ${item.required ? "required" : ""}><option value="">—</option>${options.map(option =>
+          `<option value="${escapeHtml(option.id)}" ${String(value) === option.id ? "selected" : ""}>${escapeHtml(String(optionLabel(option)).slice(0, 160))}</option>`).join("")}</select></label>`;
       }
       if (item.type === "textarea") {
         return `<label class="field">${labelText}<textarea name="${item.name}" ${item.max ? `maxlength="${item.max}"` : ""} ${item.required ? "required" : ""}>${escapeHtml(value)}</textarea></label>`;
@@ -579,12 +872,12 @@
 
     function listView(definition) {
       const list = state.lists.get(definition.key) || { status: "loading", rows: [] };
-      const canCreate = !definition.readOnly && !(definition.single && list.rows.length);
+      const canCreate = !definition.readOnly && !definition.generateOnly && !(definition.single && list.rows.length);
       const head = `<div class="options">${canCreate && list.status === "ready" ? `<button class="primary" type="button" data-module-new="${escapeHtml(definition.key)}" ${state.busy || state.editing ? "disabled" : ""}>${escapeHtml(text(definition.single ? "save" : "add"))}</button>` : ""}
         <button class="secondary" type="button" data-module-retry="${escapeHtml(definition.key)}" ${state.busy ? "disabled" : ""}>${escapeHtml(text("retry"))}</button></div>`;
       const notes = [definition.readOnly ? text("readOnly") : "", !definition.editable && !definition.readOnly ? text("appendOnly") : "",
         definition.single && list.status === "ready" && !list.rows.length ? text("noPreferences") : "",
-        list.rows.length >= 100 ? text("limit") : ""].filter(Boolean);
+        definition.hasId === false && list.rows.length >= 100 ? text("limit") : ""].filter(Boolean);
       let body;
       if (list.status === "loading") body = `<p class="muted" role="status">${escapeHtml(text("loading"))}</p>`;
       else if (list.status === "error") body = `<p class="backend-task-error" role="alert">${escapeHtml(text(list.error || "error"))}</p>`;
@@ -593,17 +886,86 @@
       return `${head}${notes.map(note => `<p class="muted">${escapeHtml(note)}</p>`).join("")}<div class="backend-task-list">${body}</div>`;
     }
 
-    function render(context) {
+    async function updateRecord(key, record, payload, notice) {
+      if (state.busy || !ctx) return;
+      const current = epoch;
+      const definition = BY_KEY.get(key);
+      state.busy = true;
+      state.error = "";
+      state.notice = "";
+      notify();
+      try {
+        await repository.update(definition, record, payload);
+        if (current !== epoch) return;
+        state.notice = notice;
+        state.lists.delete(key);
+        await loadList(key, { force: true });
+        if (key === "subscription-occurrences") state.lists.delete("subscriptions");
+      } catch (error) {
+        if (current !== epoch) return;
+        state.error = errorCode(error);
+      } finally {
+        if (current === epoch) {
+          state.busy = false;
+          notify();
+        }
+      }
+    }
+
+    async function createOccurrence(subscriptionId) {
+      const subscription = state.lists.get("subscriptions")?.rows.find(item => item.id === subscriptionId);
+      if (!subscription || subscription.status !== "active" || state.busy) return;
+      const current = epoch;
+      state.busy = true;
+      state.error = "";
+      state.notice = "";
+      notify();
+      try {
+        await getClient().request("subscription-occurrences", {
+          method: "POST", body: { subscription_id: subscription.id }
+        });
+        if (current !== epoch) return;
+        state.notice = text("occurrenceRecorded");
+        state.lists.delete("subscription-occurrences");
+        await loadList("subscription-occurrences", { force: true });
+      } catch (error) {
+        if (current !== epoch) return;
+        state.error = error?.code === "occurrence_exists" ? "occurrenceExists" : errorCode(error);
+      } finally {
+        if (current === epoch) {
+          state.busy = false;
+          notify();
+        }
+      }
+    }
+
+    function setContext(context) {
       language = context.language === "en" ? "en" : "ar";
       const key = `${context.journeyId}|${context.timeZone}`;
       if (!ctx || ctx.key !== key) {
         reset();
         ctx = { ...context, key };
       } else ctx = { ...ctx, ...context, key };
+    }
+
+    function render(context, filterKeys) {
+      setContext(context);
+      const visible = Array.isArray(filterKeys) ? MODULES.filter(item => filterKeys.includes(item.key)) : MODULES;
+      if (!visible.length) return `<section class="module-records" data-module-records><p role="alert">${escapeHtml(text("error"))}</p></section>`;
+      if (!visible.some(item => item.key === state.active)) {
+        state.active = visible[0].key;
+        if (state.editing && !visible.some(item => item.key === state.editing.key)) state.editing = null;
+      }
+      for (const item of visible) {
+        if (!state.lists.has(item.key)) queueMicrotask(() => loadList(item.key));
+      }
+      if (state.active === "notes" && visible.some(item => item.key === "notes") && state.attachments.status === "idle") {
+        queueMicrotask(() => loadAttachments());
+      }
       const definition = BY_KEY.get(state.active);
-      if (!state.lists.has(definition.key)) queueMicrotask(() => loadList(definition.key));
       const tabs = GROUPS.map(([group, ar, en]) => {
-        const items = MODULES.filter(item => item.group === group);
+        const items = visible.filter(item => item.group === group);
+        if (!items.length) return "";
         return `<div class="module-group"><p class="eyebrow">${escapeHtml(language === "en" ? en : ar)}</p><div class="levels">${items.map(item =>
           `<button type="button" data-module-tab="${escapeHtml(item.key)}" class="${item.key === state.active ? "active" : ""}" ${item.key === state.active ? 'aria-current="page"' : ""} ${state.busy || state.editing ? "disabled" : ""}>${escapeHtml(name(item))}</button>`).join("")}</div></div>`;
       }).join("");
@@ -612,25 +974,44 @@
         ${tabs}
         ${state.notice ? `<p class="backend-task-notice" role="status">${escapeHtml(state.notice)}</p>` : ""}
         ${state.error && !state.editing ? `<p class="backend-task-error" role="alert">${escapeHtml(text(state.error))}</p>` : ""}
-        ${state.editing ? formView() : ""}
+        ${state.editing && visible.some(item => item.key === state.editing.key) ? formView() : ""}
         <h3>${escapeHtml(name(definition))}</h3>
         ${listView(definition)}
       </section>`;
     }
 
-    function renderJourney(context, range) {
-      if (!ctx) render(context);
+    function renderJourney(context, range, sourceItems = [], renderSource = () => "") {
+      setContext(context);
       const key = `${ctx.journeyId}:${range.start}:${range.end}`;
       if (state.journey.key !== key) queueMicrotask(() => loadJourney(range));
       const journey = state.journey.key === key ? state.journey : { status: "loading", items: [] };
-      const body = journey.status === "loading" ? `<p class="muted" role="status">${escapeHtml(text("loading"))}</p>` :
-        journey.status === "error" ? `<p class="backend-task-error" role="alert">${escapeHtml(text(journey.error || "error"))}</p>` :
-        journey.items.map(({ definition, record, date }) => `<article class="panel backend-task" data-journey-source="${escapeHtml(definition.key)}">
+      const modules = journey.items.map(item => ({
+        ...item, kind: "module",
+        timeOrder: item.definition.range === "timestamp" ? Date.parse(item.record[item.definition.dateField]) : Number.NEGATIVE_INFINITY
+      }));
+      const base = sourceItems.map(event => ({
+        kind: "source", event, date: event.localDate,
+        timeOrder: event.sourceType === "calendar-event" && !event.original.allDay && !event.original.startsBeforeRange
+          ? Date.parse(event.original.startAt) : Number.NEGATIVE_INFINITY
+      }));
+      const ordered = [...modules, ...base].sort((a, b) =>
+        a.date.localeCompare(b.date) || a.timeOrder - b.timeOrder ||
+        String(a.record?.id || a.event?.id || "").localeCompare(String(b.record?.id || b.event?.id || ""))
+      );
+      const rows = ordered.map(item => {
+        if (item.kind === "source") return renderSource(item.event, range);
+        const { definition, record, date } = item;
+        return `<article class="panel backend-task" data-journey-source="${escapeHtml(definition.key)}">
           <p class="eyebrow">${escapeHtml(name(definition))}</p><h3>${escapeHtml(String(recordTitle(definition, record)).slice(0, 160))}</h3>
           <p class="muted">${escapeHtml(date)}${definition.dateField && /T/.test(record[definition.dateField] || "") ? ` · ${escapeHtml(utcToZonedLocal(record[definition.dateField], record.time_zone || ctx.timeZone).slice(11))}` : ""}${definition.summary && definition.summary(record) ? ` · ${escapeHtml(String(definition.summary(record)).slice(0, 160))}` : ""}</p>
           ${definition.editable ? `<button class="secondary" type="button" data-module-source-edit="${escapeHtml(definition.key)}" data-record-id="${escapeHtml(record.id)}" ${state.busy ? "disabled" : ""}>${escapeHtml(text("sourceEdit"))}</button>` : ""}
-        </article>`).join("") || `<p class="muted">${escapeHtml(text("journeyEmpty"))}</p>`;
-      return `<section class="module-journey" data-module-records><h2>${escapeHtml(text("journeyHeading"))}</h2><div class="backend-timeline">${body}</div></section>`;
+        </article>`;
+      }).join("");
+      const status = journey.status === "loading"
+        ? `<p class="muted" role="status">${escapeHtml(text("loading"))}</p>`
+        : journey.status === "error"
+          ? `<p class="backend-task-error" role="alert">${escapeHtml(text(journey.error || "error"))}</p>` : "";
+      return `<section class="module-journey" data-module-records><h2>${escapeHtml(text("journeyHeading"))}</h2>${status}${state.editing ? formView() : ""}<div class="backend-timeline">${rows || (journey.status === "ready" ? `<p class="muted">${escapeHtml(text("journeyEmpty"))}</p>` : "")}</div></section>`;
     }
 
     function findRecord(key, id) {
@@ -731,6 +1112,14 @@
         }
       });
       doc.addEventListener("change", event => {
+        const fileInput = event.target.closest?.("[data-module-attachment-file]");
+        if (fileInput) {
+          const file = fileInput.files?.[0];
+          const noteId = fileInput.dataset.noteId;
+          fileInput.value = "";
+          if (file && noteId) uploadNoteAttachment(noteId, file);
+          return;
+        }
         const form = event.target.closest?.("[data-module-form]");
         if (form && state.editing && form.dataset.moduleForm === state.editing.key) {
           state.editing.draft = formToDraft(BY_KEY.get(state.editing.key), form);
@@ -743,7 +1132,7 @@
         save(form);
       });
       doc.addEventListener("click", event => {
-        const target = event.target.closest?.("[data-module-tab],[data-module-new],[data-module-edit],[data-module-cancel],[data-module-retry],[data-module-source-edit]");
+        const target = event.target.closest?.("[data-module-tab],[data-module-new],[data-module-edit],[data-module-cancel],[data-module-retry],[data-module-source-edit],[data-module-complete],[data-module-archive],[data-module-create-occurrence],[data-module-attachment-download],[data-module-attachment-delete],[data-module-attachment-retry]");
         if (!target || !target.closest("[data-module-records]") || state.busy || !ctx) return;
         if (target.matches("[data-module-tab]")) {
           if (state.editing) return;
@@ -769,6 +1158,23 @@
           state.error = "";
           if (BY_KEY.get(target.dataset.moduleRetry)?.single || BY_KEY.get(target.dataset.moduleRetry)?.consent) state.preferences = { status: "idle", row: null };
           loadList(target.dataset.moduleRetry, { force: true });
+        } else if (target.matches("[data-module-complete]")) {
+          const definition = BY_KEY.get(target.dataset.moduleComplete);
+          const record = findRecord(definition.key, target.dataset.recordId);
+          if (record) updateRecord(definition.key, record, { [definition.completeField]: record[definition.completeField] ? null : new Date().toISOString() }, text("completed"));
+        } else if (target.matches("[data-module-archive]")) {
+          const definition = BY_KEY.get(target.dataset.moduleArchive);
+          const record = findRecord(definition.key, target.dataset.recordId);
+          if (record && definition.archiveColumn) updateRecord(definition.key, record, { [definition.archiveColumn]: new Date().toISOString() }, text("archived"));
+        } else if (target.matches("[data-module-create-occurrence]")) {
+          createOccurrence(target.dataset.moduleCreateOccurrence);
+        } else if (target.matches("[data-module-attachment-download]")) {
+          downloadAttachment(target.dataset.moduleAttachmentDownload);
+        } else if (target.matches("[data-module-attachment-delete]")) {
+          deleteAttachment(target.dataset.moduleAttachmentDelete);
+        } else if (target.matches("[data-module-attachment-retry]")) {
+          state.attachments = { status: "idle", rows: [], links: [] };
+          loadAttachments(true);
         }
       });
     }
@@ -778,6 +1184,6 @@
 
   return Object.freeze({
     MODULES, createModuleRecordsRepository, createModuleRecordsController,
-    buildPayload, recordToDraft, zonedLocalToUtc, utcToZonedLocal, rangeQuery
+    buildPayload, recordToDraft, zonedLocalToUtc, utcToZonedLocal, rangeQuery, nextOccurrence
   });
 });

@@ -35,6 +35,7 @@
   const messages = {
     ar: {
       title: "مهامك المحفوظة", intro: "تُحمّل المهام والمواعيد من الخادم، ويعرض المسار عناصرها من مصادرها الأصلية.",
+      journeyTitle: "رحلتي من سجلاتها الأصلية", journeyIntro: "يعرض هذا المسار المهام والمواعيد والسجلات المحفوظة من مصادرها، مرتبة حسب التاريخ والوقت.",
       loading: "جارٍ التحقق من الجلسة وتحميل المهام…", unauthenticated: "يلزم تسجيل الدخول عبر صَرح لعرض البيانات المحفوظة. لم تُعرض بيانات المثال.",
       expired: "انتهت الجلسة. سجّل الدخول مجدداً عبر صَرح.", unavailable: "خدمة الهوية أو الخلفية غير متاحة حالياً. لا تُعرض بيانات تجريبية.",
       error: "تعذر تحميل بيانات الخادم. أعد المحاولة.", retry: "إعادة المحاولة", empty: "لا توجد مهام محفوظة بعد.",
@@ -69,6 +70,7 @@
     },
     en: {
       title: "Your saved tasks", intro: "Tasks and appointments load from the server; the timeline reads their original records.",
+      journeyTitle: "My journey from original records", journeyIntro: "This journey shows saved tasks, appointments and source records in date and time order.",
       loading: "Checking session and loading tasks…", unauthenticated: "Sign in through Sarh to view saved data. Example data is hidden.",
       expired: "Your session expired. Sign in through Sarh again.", unavailable: "Identity or backend service is unavailable. Example data is hidden.",
       error: "Could not load server data. Try again.", retry: "Retry", empty: "No saved tasks yet.",
@@ -539,8 +541,11 @@
       journeyId: state.journey.id, timeZone: state.journey.timeZone,
       today: state.loadedToday || currentDate(state.journey.timeZone), language
     };
-    const modulePanel = moduleRecords ? moduleRecords.render(moduleContext) : "";
-    const journeyRecords = moduleRecords ? moduleRecords.renderJourney(moduleContext, range) : "";
+    const isJourney = state.surface === "journey";
+    const modulePanel = moduleRecords && !isJourney ? moduleRecords.render(moduleContext) : "";
+    const journeyRecords = moduleRecords
+      ? moduleRecords.renderJourney(moduleContext, range, timeline, event => timelineRow(event, range))
+      : "";
     const navigationLocked = state.busy || state.eventDraft?.surface === "timeline";
     const draftSource = state.eventDraft?.surface === "timeline" ? state.timelineAppointments : state.dailySources;
     const missingDraft = state.eventDraft && draftSource.status === "ready" && !eventForDraft();
@@ -551,34 +556,62 @@
         state.eventDraft && state.error ? actionErrorText(state.error) : ""
       )
       : "";
-    return `<div class="page-head"><div><p class="eyebrow">${escapeHtml(state.journey.title)}</p><h1>${escapeHtml(text("title"))}</h1><p class="sub">${escapeHtml(text("intro"))}</p></div></div>
+    const pageTitle = isJourney ? text("journeyTitle") : text("title");
+    const pageIntro = isJourney ? text("journeyIntro") : text("intro");
+    const periodControls = ["day", "week", "month", "year"].map(period =>
+      isJourney
+        ? `<button type="button" data-screen="${period}" class="${state.period === period ? "active" : ""}" ${state.period === period ? 'aria-current="page"' : ""}>${escapeHtml(text(period))}</button>`
+        : `<button type="button" data-backend-period="${period}" class="${state.period === period ? "active" : ""}" ${state.period === period ? 'aria-current="page"' : ""} ${navigationLocked ? "disabled" : ""}>${escapeHtml(text(period))}</button>`
+    ).join("");
+    return `<div class="page-head"><div><p class="eyebrow">${escapeHtml(state.journey.title)}</p><h1>${escapeHtml(pageTitle)}</h1><p class="sub">${escapeHtml(pageIntro)}</p></div></div>
       ${daily}
       ${missingDraft ? `<section class="panel"><p role="alert">${escapeHtml(text("eventMissing"))}</p>
         <label class="field">${escapeHtml(text("eventDraft"))}<input readonly value="${escapeHtml(state.eventDraft.title)}"></label>
         <button class="secondary" type="button" data-daily-event-cancel>${escapeHtml(text("cancel"))}</button></section>` : ""}
-      <div class="levels" aria-label="${escapeHtml(text("title"))}">${["day", "week", "month", "year"].map(period =>
-        `<button type="button" data-backend-period="${period}" class="${state.period === period ? "active" : ""}" ${state.period === period ? 'aria-current="page"' : ""} ${navigationLocked ? "disabled" : ""}>${escapeHtml(text(period))}</button>`
-      ).join("")}</div>
+      <div class="levels" aria-label="${escapeHtml(isJourney ? text("journeyTitle") : text("title"))}">${periodControls}</div>
       ${state.eventDraft?.surface === "timeline" ? `<p class="muted">${escapeHtml(text("timelineDraftLock"))}</p>` : ""}
       <section class="panel"><div class="options">
         <button class="secondary" type="button" data-backend-date-shift="-1" aria-label="${escapeHtml(text("previous"))}" ${navigationLocked ? "disabled" : ""}>‹</button>
         <label class="field">${escapeHtml(text("selectDate"))}<input type="date" data-backend-selected-date value="${escapeHtml(selectedDate)}" ${navigationLocked ? "disabled" : ""}></label>
         <button class="secondary" type="button" data-backend-date-shift="1" aria-label="${escapeHtml(text("next"))}" ${navigationLocked ? "disabled" : ""}>›</button>
       </div></section>
-      <section class="panel"><div class="options"><button class="primary" type="button" data-task-add>${escapeHtml(text("add"))}</button>
+      <section class="panel"><div class="options">${isJourney ? "" : `<button class="primary" type="button" data-task-add>${escapeHtml(text("add"))}</button>`}
       <button class="secondary" type="button" data-backend-retry ${state.busy ? "disabled" : ""}>${escapeHtml(text("retry"))}</button></div></section>
       ${state.notice ? `<p class="backend-task-notice" role="status">${escapeHtml(state.notice)}</p>` : ""}
       ${state.error && !state.editing ? `<p class="backend-task-error" role="alert">${escapeHtml(actionErrorText(state.error))}</p>` : ""}
       ${state.editing ? formView(state.editing === "new" ? null : state.editing) : ""}
-      <h2>${escapeHtml(text("timeline"))}</h2>
       ${state.timelineAppointments.status === "error" ? `<p role="alert">${escapeHtml(text("timelineError"))}</p>` :
         state.timelineAppointments.status === "unavailable" ? `<p class="muted">${escapeHtml(text("timelineUnavailable"))}</p>` : ""}
-      <div class="backend-timeline">${timeline.map(event => timelineRow(event, range)).join("") ||
-        (state.timelineAppointments.status === "ready" ? `<p class="muted">${escapeHtml(text("timelineEmpty"))}</p>` : "")}</div>
       ${journeyRecords}
-      <h2>${escapeHtml(text("title"))}</h2>
-      <div class="backend-task-list">${ordered.map(taskRow).join("") || `<p class="muted">${escapeHtml(text("empty"))}</p>`}</div>
-      ${modulePanel}`;
+      ${isJourney ? "" : `<h2>${escapeHtml(text("title"))}</h2><div class="backend-task-list">${ordered.map(taskRow).join("") || `<p class="muted">${escapeHtml(text("empty"))}</p>`}</div>`}
+      ${isJourney ? "" : modulePanel}`;
+  }
+
+  function moduleContext() {
+    if (!state.journey) return null;
+    return {
+      journeyId: state.journey.id, timeZone: state.journey.timeZone,
+      today: state.loadedToday || currentDate(state.journey.timeZone), language
+    };
+  }
+
+  function renderModulePage(keys) {
+    if (state.auth !== "authenticated") return authView();
+    const context = moduleContext();
+    if (!context) return render();
+    return moduleRecords ? moduleRecords.render(context, keys) : authView();
+  }
+
+  function setPeriodForScreen(period) {
+    if (!["day", "week", "month", "year"].includes(period)) return;
+    state.surface = "journey";
+    if (state.period === period) return;
+    state.period = period;
+    if (state.auth === "authenticated" && started) refresh();
+  }
+
+  function setActivitiesSurface() {
+    state.surface = "activities";
   }
 
   async function save(form) {
@@ -841,6 +874,7 @@
       if (target.matches("[data-backend-period]")) {
         if (state.eventDraft?.surface === "timeline") return;
         state.period = target.dataset.backendPeriod;
+        state.surface = "activities";
         refresh();
         return;
       }
@@ -1001,6 +1035,9 @@
   return Object.freeze({
     state,
     render,
+    renderModulePage,
+    setPeriodForScreen,
+    setActivitiesSurface,
     refresh,
     start,
     setSessionProvider: configureSessionProvider,

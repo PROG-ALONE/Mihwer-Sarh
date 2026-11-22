@@ -8,14 +8,14 @@ const RESOURCES = Object.freeze({
   locations: { table: "locations", mode: "read-write", journeyScoped: true },
   paths: { table: "paths", mode: "read-write", journeyScoped: true },
   stations: { table: "stations", mode: "read-write", journeyScoped: true },
-  projects: { table: "projects", mode: "read-write", journeyScoped: true },
-  goals: { table: "goals", mode: "read-write", journeyScoped: false },
+  projects: { table: "projects", mode: "read-write", journeyScoped: true, excludeDeleted: true },
+  goals: { table: "goals", mode: "read-write", journeyScoped: false, excludeDeleted: true },
   tasks: { table: "tasks", mode: "read-write", journeyScoped: true },
   "task-occurrences": { table: "task_occurrences", mode: "read-write", journeyScoped: false },
   "task-subtasks": { table: "task_subtasks", mode: "read-write", journeyScoped: false },
   habits: { table: "habits", mode: "read-write", journeyScoped: true },
   "habit-revisions": { table: "habit_revisions", mode: "append", journeyScoped: false, parentJourney: "habits" },
-  "habit-records": { table: "habit_records", mode: "read-write", journeyScoped: false, parentJourney: "habits", updateFields: ["status", "amount"] },
+  "habit-records": { table: "habit_records", mode: "read-write", journeyScoped: false, parentJourney: "habits", range: { column: "local_date", kind: "date" }, updateFields: ["status", "amount"] },
   "project-milestones": { table: "project_milestones", mode: "read-write", journeyScoped: false },
   "goal-project-links": { table: "goal_project_links", mode: "append", hasId: false, order: "goal_id.desc,project_id.desc", journeyScoped: false },
   "goal-task-links": { table: "goal_task_links", mode: "append", hasId: false, order: "goal_id.desc,task_id.desc", journeyScoped: false },
@@ -31,16 +31,16 @@ const RESOURCES = Object.freeze({
   "activity-sessions": { table: "activity_sessions", mode: "append", journeyScoped: true, range: { column: "started_at", kind: "timestamp" } },
   "sleep-records": { table: "sleep_records", mode: "read-write", journeyScoped: true, range: { column: "wake_local_date", kind: "date" } },
   "meal-logs": { table: "meal_logs", mode: "read-write", journeyScoped: true, range: { column: "occurred_at", kind: "timestamp" } },
-  notes: { table: "notes", mode: "read-write", journeyScoped: true },
+  notes: { table: "notes", mode: "read-write", journeyScoped: true, excludeDeleted: true },
   "note-goal-links": { table: "note_goal_links", mode: "append", hasId: false, order: "note_id.desc,goal_id.desc", journeyScoped: false },
   "note-task-links": { table: "note_task_links", mode: "append", hasId: false, order: "note_id.desc,task_id.desc", journeyScoped: false },
   "note-project-links": { table: "note_project_links", mode: "append", hasId: false, order: "note_id.desc,project_id.desc", journeyScoped: false },
-  attachments: { table: "attachments", mode: "read-only", journeyScoped: false },
+  attachments: { table: "attachments", mode: "read-only", journeyScoped: false, excludeDeleted: true, readyOnly: true },
   "attachment-links": { table: "attachment_links", mode: "read-only", journeyScoped: false },
-  "shopping-lists": { table: "shopping_lists", mode: "read-write", journeyScoped: false },
-  "shopping-items": { table: "shopping_items", mode: "read-write", journeyScoped: false },
-  subscriptions: { table: "subscriptions", mode: "read-write", journeyScoped: false },
-  "subscription-occurrences": { table: "subscription_occurrences", mode: "read-only", journeyScoped: false },
+  "shopping-lists": { table: "shopping_lists", mode: "read-write", journeyScoped: false, excludeDeleted: true },
+  "shopping-items": { table: "shopping_items", mode: "read-write", journeyScoped: false, excludeArchived: true },
+  subscriptions: { table: "subscriptions", mode: "read-write", journeyScoped: false, excludeDeleted: true },
+  "subscription-occurrences": { table: "subscription_occurrences", mode: "read-write", journeyScoped: false },
   "financial-accounts": { table: "financial_accounts", mode: "read-write", journeyScoped: false },
   "finance-categories": { table: "finance_categories", mode: "read-write", journeyScoped: false },
   budgets: { table: "budgets", mode: "read-write", journeyScoped: false },
@@ -157,6 +157,9 @@ async function createHandler({
       }
 
       const baseQuery = { owner_id: `eq.${profile.id}` };
+      if (config.excludeDeleted) baseQuery.deleted_at = "is.null";
+      if (config.excludeArchived) baseQuery.archived_at = "is.null";
+      if (config.readyOnly) baseQuery.state = "eq.ready";
       let dbMethod;
       let dbBody;
       let dbTable = config.table;
@@ -271,7 +274,16 @@ async function createHandler({
             p_amount: dbBody.amount ?? null
           };
         } else {
-          dbBody = { ...dbBody, owner_id: profile.id };
+          if (resource === "subscription-occurrences") {
+            if (Object.keys(dbBody).length !== 1 || !UUID.test(dbBody.subscription_id || "")) {
+              throw new IdentityError("validation_failed", 400);
+            }
+            dbTable = "rpc/create_own_subscription_occurrence";
+            dbQuery = {};
+            dbBody = { p_subscription_id: dbBody.subscription_id };
+          } else {
+            dbBody = { ...dbBody, owner_id: profile.id };
+          }
         }
         dbMethod = "POST";
       } else if (method === "PATCH") {
@@ -293,7 +305,19 @@ async function createHandler({
         if (config.updateFields && Object.keys(dbBody).some(key => !config.updateFields.includes(key))) {
           throw new IdentityError("validation_failed", 400);
         }
-        if (resource === "habit-records") {
+        if (resource === "subscription-occurrences") {
+          if (Object.keys(dbBody).length !== 1 || !["due", "paid", "skipped", "cancelled"].includes(dbBody.status)) {
+            throw new IdentityError("validation_failed", 400);
+          }
+          dbTable = "rpc/transition_own_subscription_occurrence";
+          dbQuery = {};
+          dbBody = {
+            p_occurrence_id: id,
+            p_expected_version: expectedVersion,
+            p_status: dbBody.status
+          };
+          dbMethod = "POST";
+        } else if (resource === "habit-records") {
           dbTable = "rpc/update_habit_record";
           dbQuery = {};
           dbBody = {
@@ -325,6 +349,12 @@ async function createHandler({
         fetchImpl
       });
       if (!result.response.ok) {
+        if (resource === "subscription-occurrences" && result.data?.code === "40001") {
+          return response(409, { error: { code: "version_conflict" } });
+        }
+        if (resource === "subscription-occurrences" && result.data?.code === "P0002") {
+          return response(404, { error: { code: "not_found" } });
+        }
         if (resource === "habit-records" &&
             (method === "POST" && result.data?.code === "23505" || method === "PATCH" && result.data?.code === "40001")) {
           return response(409, { error: { code: "version_conflict" } });

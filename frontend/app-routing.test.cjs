@@ -27,17 +27,25 @@ function control(screen) {
 
 function shell(hash = "#day") {
   const view = control(), dialog = control(), topbar = control(), mobile = control();
-  const nav = ["day", "activities", "paths", "organizer"].map(control);
+  const nav = ["day", "activities", "paths", "notes", "organizer"].map(control);
   const actions = [control(), control(), control()];
   const disclosures = [control(), control()];
   const events = {};
   const documentEvents = {};
   const location = { hash };
+  const periodSelections = [];
+  const modulePages = [];
   const window = {
     location, scrollY: 0, scrollTo() {},
     history: { pushState(_state, _title, next) { location.hash = next; } },
     addEventListener(name, handler) { events[name] = handler; },
-    MihwarTaskSlice: { render: () => "<p>server-auth-state</p>", state: { draft: "retained" } }
+    MihwarTaskSlice: {
+      render: () => "<p>server-auth-state</p>",
+      renderModulePage: keys => { modulePages.push(keys); return `<p>server-module:${keys.join(",")}</p>`; },
+      setPeriodForScreen: period => periodSelections.push(period),
+      setActivitiesSurface() {},
+      state: { draft: "retained" }
+    }
   };
   const document = {
     documentElement: {}, body: control(),
@@ -66,24 +74,25 @@ function shell(hash = "#day") {
   vm.runInContext(source, context);
   const beforeDependencies = view.innerHTML;
   vm.runInContext('journey=()=>`<section class="original-journey">${screen}</section>`; render();', context);
-  return { context, view, dialog, topbar, mobile, nav, actions, disclosures, events, documentEvents, beforeDependencies, location, window };
+  return { context, view, dialog, topbar, mobile, nav, actions, disclosures, events, documentEvents, beforeDependencies, location, window, periodSelections, modulePages };
 }
 
 for (const route of ["day", "week", "month", "year"]) {
-  test(`direct #${route} restores the original journey renderer with the API client present`, () => {
+  test(`direct #${route} renders the server-backed journey and selects its period`, () => {
     const app = shell(`#${route}`);
     assert.equal(app.beforeDependencies, "");
     assert.equal(typeof app.documentEvents.DOMContentLoaded, "function");
-    assert.match(app.view.innerHTML, new RegExp(`original-journey">${route}`));
-    assert.match(app.view.innerHTML, /data-journey-preview/);
-    assert.doesNotMatch(app.view.innerHTML, /server-auth-state/);
+    assert.match(app.view.innerHTML, /data-backend-task-slice/);
+    assert.match(app.view.innerHTML, /server-auth-state/);
+    assert.deepEqual(app.periodSelections, [route]);
+    assert.doesNotMatch(app.view.innerHTML, /data-journey-preview/);
     assert.equal(app.nav[0].disabled, false);
     assert.equal(app.topbar.hasAttribute("inert"), false);
     assert.equal(app.mobile.hasAttribute("inert"), false);
   });
 }
 
-test("navigation keeps API auth separate, restores the journey, and retains the server draft", () => {
+test("navigation preserves the API session state and retains drafts across product pages", () => {
   const app = shell();
   vm.runInContext('go("activities")', app.context);
   assert.equal(app.location.hash, "#activities");
@@ -93,23 +102,38 @@ test("navigation keeps API auth separate, restores the journey, and retains the 
   assert.ok(app.disclosures.every(disclosure => disclosure.style.display === "none"));
   vm.runInContext('go("day")', app.context);
   assert.equal(app.location.hash, "#day");
-  assert.match(app.view.innerHTML, /original-journey/);
-  assert.ok(app.actions.every(action => !action.disabled));
-  assert.ok(app.disclosures.every(disclosure => disclosure.style.display === ""));
+  assert.match(app.view.innerHTML, /server-auth-state/);
+  assert.ok(app.actions.every(action => action.disabled));
+  assert.ok(app.disclosures.every(disclosure => disclosure.style.display === "none"));
   assert.equal(app.window.MihwarTaskSlice.state.draft, "retained");
 });
 
-test("hash changes, back navigation, and unknown routes use the same original route", () => {
+test("hash changes and browser back/forward keep journey routes on the server-backed renderer", () => {
   const app = shell("#activities");
   app.location.hash = "#month";
   app.dialog.open = true;
   app.events.hashchange();
-  assert.match(app.view.innerHTML, /original-journey">month/);
+  assert.match(app.view.innerHTML, /server-auth-state/);
+  assert.deepEqual(app.periodSelections, ["month"]);
   assert.equal(app.dialog.open, false);
   app.location.hash = "#day";
   app.events.popstate();
-  assert.match(app.view.innerHTML, /original-journey">day/);
-  assert.match(shell("#unknown").view.innerHTML, /original-journey">day/);
+  assert.match(app.view.innerHTML, /server-auth-state/);
+  assert.deepEqual(app.periodSelections, ["month", "day"]);
+  assert.match(shell("#unknown").view.innerHTML, /server-auth-state/);
+});
+
+test("original goals, notes, and shopping URLs render their source module pages", () => {
+  for (const [hash, keys] of [
+    ["#paths", ["projects", "goals", "project-milestones", "goal-project-links"]],
+    ["#notes", ["notes"]],
+    ["#organizer", ["shopping-lists", "shopping-items", "subscriptions", "subscription-occurrences"]]
+  ]) {
+    const app = shell(hash);
+    assert.match(app.view.innerHTML, /server-module:/);
+    assert.deepEqual(JSON.parse(JSON.stringify(app.modulePages[0])), keys);
+    assert.doesNotMatch(app.view.innerHTML, /temporary|prototype|معاينة محلية/);
+  }
 });
 
 test("API task controls ignore original station edits but handle server add controls", async () => {

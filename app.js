@@ -1,7 +1,7 @@
 "use strict";
 
 const words = {
-  journey:["رحلتي","My journey"], paths:["مساراتي","My paths"], goals:["أهدافي","My goals"], sharing:["المشاركة","Sharing"], organizerTitle:["المشتريات والاشتراكات","Shopping and subscriptions"], organizerNav:["شراء واشتراكات","Shop & subs"], organizerSubtitle:["قوائمك اليومية ومواعيد التجديد القادمة.","Your everyday lists and upcoming renewal dates."], navLabel:["التنقل بين التصاميم","Design navigation"],
+  journey:["رحلتي","My journey"], paths:["مساراتي","My paths"], goals:["أهدافي","My goals"], notesPage:["ملاحظاتي","My notes"], sharing:["المشاركة","Sharing"], organizerTitle:["المشتريات والاشتراكات","Shopping and subscriptions"], organizerNav:["شراء واشتراكات","Shop & subs"], organizerSubtitle:["قوائمك اليومية ومواعيد التجديد القادمة.","Your everyday lists and upcoming renewal dates."], navLabel:["التنقل بين التصاميم","Design navigation"],
   language:["اللغة","Language"], theme:["المظهر","Theme"], settingsLabel:["الإعدادات","Settings"], search:["البحث","Search"], voice:["الصوت","Voice"], add:["إضافة","Add"], close:["إغلاق","Close"],
   prototypeNotice:["نموذج ببيانات توضيحية • حصاد اليوم يُحفظ على هذا الجهاز فقط؛ لا رفع أو مشاركة فعلية","Example data only • today's reflection is saved on this device; no uploads or real sharing"],
   designLab:["استوديو التصميم · نموذج للمراجعة","DESIGN LAB · REVIEW PROTOTYPE"], journeyTitle:["رحلة تشبهك","A journey that's yours"],
@@ -57,7 +57,7 @@ const words = {
   chooseDates:["التاريخ والفترة في هذا النموذج للعرض فقط.","Date and period in this prototype are illustrative."], previewSettings:["إعدادات المعاينة","Preview settings"]
 };
 let language = "ar";
-const appScreens = new Set(["day","week","month","year","activities","paths","organizer","document","sharing","preview"]);
+const appScreens = new Set(["day","week","month","year","activities","paths","goals","notes","organizer","document","sharing","preview"]);
 function screenFromHash(hash) {
   const requested=hash.replace(/^#/,"");
   return appScreens.has(requested)?requested:"day";
@@ -223,7 +223,11 @@ function pathsView() {
 }
 function render() {
   const taskSlice=window.MihwarTaskSlice;
-  const serverScreen=Boolean(taskSlice&&screen==="activities");
+  const journeyScreen=["day","week","month","year"].includes(screen);
+  const modulePage=screen==="paths"||screen==="goals"?"goals":screen==="notes"?"notes":screen==="organizer"?"organizer":null;
+  const serverScreen=Boolean(taskSlice&&(journeyScreen||screen==="activities"||modulePage));
+  if(journeyScreen)taskSlice?.setPeriodForScreen?.(screen);
+  else if(screen==="activities")taskSlice?.setActivitiesSurface?.();
   document.documentElement.lang=language; document.documentElement.dir=language==="ar"?"rtl":"ltr";
   document.body.classList.toggle("journey-day",screen==="day"&&!serverScreen);
   document.body.classList.toggle("journey-period",["week","month","year"].includes(screen));
@@ -237,7 +241,16 @@ function render() {
   document.querySelectorAll(".top-actions button").forEach(control=>{control.disabled=serverScreen;});
   document.querySelectorAll(".notice,#scenic-disclosure").forEach(el=>{el.style.display=serverScreen?"none":"";});
   if(serverScreen){
-    view.innerHTML=`<div data-backend-task-slice>${taskSlice.render()}</div><section class="progress-settings-entry"><button type="button" class="secondary" data-utility="settings">${language==="ar"?"الإعدادات والإحصائيات":"Settings & progress"}</button></section>`;
+    const modulePages={
+      goals:{title:language==="ar"?"أهدافي ومشاريعي":"My goals and projects",keys:["projects","goals","project-milestones","goal-project-links"]},
+      notes:{title:language==="ar"?"ملاحظاتي وأفكاري":"My notes and ideas",keys:["notes"]},
+      organizer:{title:language==="ar"?"المشتريات والاشتراكات":"Shopping and subscriptions",keys:["shopping-lists","shopping-items","subscriptions","subscription-occurrences"]}
+    };
+    const page=modulePages[modulePage];
+    const content=page
+      ? `<div class="page-head"><div><p class="eyebrow">${language==="ar"?"من سجلاتك الأصلية":"From your source records"}</p><h1>${esc(page.title)}</h1></div></div>${taskSlice.renderModulePage?.(page.keys)||taskSlice.render()}`
+      : taskSlice.render();
+    view.innerHTML=`<div data-backend-task-slice>${content}</div><section class="progress-settings-entry"><button type="button" class="secondary" data-utility="settings">${language==="ar"?"الإعدادات والإحصائيات":"Settings & progress"}</button></section>`;
   }else{
     const preview=taskSlice?`<p class="disabled-note" data-journey-preview role="status">${language==="ar"?"معاينة محلية للواجهة الأصلية؛ عناصرها ليست بيانات محفوظة في الخادم.":"Local preview of the original interface; its items are not server-saved data."} <button class="secondary" data-screen="activities">${language==="ar"?"المهام والعادات المحفوظة":"Saved tasks and habits"}</button></p>`:"";
     view.innerHTML = preview+(["day","week","month","year"].includes(screen)?journey():screen==="document"?documentView():screen==="sharing"?sharingView():screen==="preview"?previewView():screen==="activities"&&typeof activitiesView==="function"?activitiesView():screen==="organizer"&&typeof organizerView==="function"?organizerView():pathsView());

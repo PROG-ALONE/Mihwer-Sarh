@@ -15,7 +15,7 @@
     }
   }
 
-  const allowedMethods = new Set(["GET", "POST", "PATCH"]);
+  const allowedMethods = new Set(["GET", "POST", "PATCH", "DELETE"]);
   const retryableStatuses = new Set([502, 503, 504]);
 
   function parseJson(text, contentType) {
@@ -75,7 +75,7 @@
       if (typeof resource !== "string" || !/^[a-z][a-z0-9-]*$/.test(resource)) {
         throw new ApiError("invalid_resource", 400);
       }
-      if (verb !== "GET" && !body) throw new ApiError("request_body_required", 400);
+      if (["POST", "PATCH"].includes(verb) && !body) throw new ApiError("request_body_required", 400);
       const token = await getAccessToken();
       if (!token) {
         onAuthStateChange("unauthenticated");
@@ -142,7 +142,105 @@
       throw new ApiError("network_error", 0);
     }
 
-    return Object.freeze({ request, setSessionProvider });
+    async function uploadAttachment(file, { noteId, signal, onProgress = () => {} } = {}) {
+      if (!file || typeof file.arrayBuffer !== "function" || !Number.isSafeInteger(file.size) || file.size < 1 ||
+          file.size > 20 * 1024 * 1024 || typeof file.type !== "string" || !file.type) {
+        throw new ApiError("validation_failed", 400);
+      }
+      if (!globalThis.crypto?.subtle) throw new ApiError("checksum_unavailable", 503);
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+      const checksum = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+      const body = { content_type: file.type, byte_size: file.size, checksum };
+      if (noteId) body.note_id = noteId;
+      onProgress("preparing");
+      const prepared = await request("attachments", {
+        method: "POST",
+        query: { action: "prepare" },
+        body,
+        signal
+      });
+
+      const controller = new AbortController();
+      const abortUpload = () => controller.abort(signal?.reason);
+      if (signal?.aborted) abortUpload();
+      else signal?.addEventListener("abort", abortUpload, { once: true });
+      const timeout = setTimeout(() => controller.abort(new Error("request_timeout")), 120_000);
+      try {
+        onProgress("uploading");
+        const uploadResponse = await fetchImpl(prepared.upload_url, {
+          method: "PUT",
+          headers: { "content-type": file.type, "x-upsert": "false" },
+          body: file,
+          signal: controller.signal
+        });
+        if (!uploadResponse.ok) {
+          throw new ApiError("storage_upload_failed", uploadResponse.status);
+        }
+      } catch (error) {
+        try {
+          await request("attachments", {
+            method: "POST",
+            query: { action: "abort" },
+            body: { id: prepared.id }
+          });
+        } catch (cleanupError) {
+          throw new ApiError("attachment_cleanup_failed", 502, cleanupError);
+        }
+        if (error instanceof ApiError) throw error;
+        if (signal?.aborted) throw new ApiError("request_aborted", 0);
+        if (controller.signal.aborted) {
+          throw new ApiError(controller.signal.reason?.message === "request_timeout" ? "request_timeout" : "request_aborted", 0);
+        }
+        throw new ApiError("network_error", 0, error);
+      } finally {
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", abortUpload);
+      }
+
+      onProgress("verifying");
+      const readFinalizedAttachment = async () => {
+        const rows = await request("attachments", { query: { id: prepared.id, limit: 1 } });
+        return Array.isArray(rows)
+          ? rows.find(row => row?.id === prepared.id && row.state === "ready") || null
+          : null;
+      };
+      try {
+        return await request("attachments", {
+          method: "POST",
+          query: { action: "finalize" },
+          body: { id: prepared.id },
+          signal
+        });
+      } catch (error) {
+        let recovered;
+        try {
+          recovered = await readFinalizedAttachment();
+        } catch {
+          recovered = null;
+        }
+        if (recovered) return recovered;
+        try {
+          await request("attachments", {
+            method: "POST",
+            query: { action: "abort" },
+            body: { id: prepared.id }
+          });
+        } catch (cleanupError) {
+          if (cleanupError?.code !== "invalid_attachment_state") {
+            throw new ApiError("attachment_cleanup_failed", 502, cleanupError);
+          }
+          try {
+            recovered = await readFinalizedAttachment();
+          } catch (stateError) {
+            throw new ApiError("attachment_state_unavailable", 502, stateError);
+          }
+          if (recovered) return recovered;
+        }
+        throw error;
+      }
+    }
+
+    return Object.freeze({ request, uploadAttachment, setSessionProvider });
   }
 
   return Object.freeze({ ApiError, createApiClient });

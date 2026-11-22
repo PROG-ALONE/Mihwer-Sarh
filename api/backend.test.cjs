@@ -250,6 +250,7 @@ test("module record ranges are validated per source column and remain owner-scop
   const dates = { journey_id: journeyId, range_from: "2026-11-01", range_to: "2026-11-30" };
   const instants = { journey_id: journeyId, range_from: "2026-10-31T21:00:00.000Z", range_to: "2026-11-30T21:00:00.000Z" };
   for (const [resource, query, expected] of [
+    ["habit-records", dates, "(local_date.gte.2026-11-01,local_date.lte.2026-11-30)"],
     ["daily-reflections", dates, "(local_date.gte.2026-11-01,local_date.lte.2026-11-30)"],
     ["prayer-records", dates, "(local_date.gte.2026-11-01,local_date.lte.2026-11-30)"],
     ["sleep-records", dates, "(wake_local_date.gte.2026-11-01,wake_local_date.lte.2026-11-30)"],
@@ -259,7 +260,10 @@ test("module record ranges are validated per source column and remain owner-scop
   ]) {
     assert.equal((await handler(request("GET", resource, { query }))).status, 200, resource);
     assert.equal(requestUrl.searchParams.get("owner_id"), `eq.${userA}`);
-    assert.equal(requestUrl.searchParams.get("journey_id"), `eq.${journeyId}`);
+    if (resource === "habit-records") {
+      assert.equal(requestUrl.searchParams.get("select"), "*,habits!inner(journey_id)");
+      assert.equal(requestUrl.searchParams.get("habits.journey_id"), `eq.${journeyId}`);
+    } else assert.equal(requestUrl.searchParams.get("journey_id"), `eq.${journeyId}`);
     assert.equal(requestUrl.searchParams.get("and"), expected);
   }
   for (const [resource, query] of [
@@ -482,6 +486,46 @@ test("financial writes, attachment writes, hard deletes, and unknown resources a
   assert.equal((await handler(request("DELETE", "tasks"))).status, 405);
   assert.equal((await handler(request("GET", "arbitrary-table"))).status, 404);
   assert.equal(RESOURCES["financial-transactions"].mode, "read-only");
+});
+
+test("legacy module resources preserve soft archives and subscription recurrence RPC ownership", async () => {
+  const provider = createTestIdentityProvider();
+  const calls = [];
+  const handler = await createHandler({
+    provider,
+    profileResolver: async () => ({ id: userA, status: "active" }),
+    env: { MIHWAR_SUPABASE_URL: "https://mihwar.test.invalid", MIHWAR_SUPABASE_ANON_KEY: "public-test-key" },
+    fetchImpl: async (url, options) => {
+      calls.push({ url: new URL(url), options });
+      return jsonResponse([{ id: "occurrence", owner_id: userA, status: "due", version: 1 }]);
+    }
+  });
+  assert.equal((await handler(request("GET", "notes"))).status, 200);
+  assert.equal(calls.at(-1).url.searchParams.get("deleted_at"), "is.null");
+  assert.equal(calls.at(-1).url.searchParams.get("owner_id"), `eq.${userA}`);
+  assert.equal((await handler(request("GET", "shopping-items"))).status, 200);
+  assert.equal(calls.at(-1).url.searchParams.get("archived_at"), "is.null");
+
+  const subscriptionId = "00000000-0000-4000-8000-000000000022";
+  assert.equal((await handler(request("POST", "subscription-occurrences", {
+    body: { subscription_id: subscriptionId }
+  }))).status, 201);
+  assert.equal(calls.at(-1).url.pathname, "/rest/v1/rpc/create_own_subscription_occurrence");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body), { p_subscription_id: subscriptionId });
+  assert.equal(Object.hasOwn(JSON.parse(calls.at(-1).options.body), "owner_id"), false);
+
+  const occurrenceId = "00000000-0000-4000-8000-000000000023";
+  assert.equal((await handler(request("PATCH", "subscription-occurrences", {
+    query: { id: occurrenceId, expected_version: "4" }, body: { status: "paid" }
+  }))).status, 200);
+  assert.equal(calls.at(-1).url.pathname, "/rest/v1/rpc/transition_own_subscription_occurrence");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body), {
+    p_occurrence_id: occurrenceId, p_expected_version: 4, p_status: "paid"
+  });
+  assert.equal((await handler(request("POST", "subscription-occurrences", {
+    body: { subscription_id: subscriptionId, owner_id: "forged" }
+  }))).status, 400);
+  assert.equal(RESOURCES["subscription-occurrences"].mode, "read-write");
 });
 
 test("production handler does not allow access through the Sarh adapter placeholder", async () => {
